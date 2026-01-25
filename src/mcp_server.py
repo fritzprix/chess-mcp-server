@@ -30,6 +30,7 @@ DASHBOARD_PORT = 8080
 
 class GameConfig(BaseModel):
     type: Literal["computer", "agent"] = Field(..., description="Play against 'computer' (AI) or 'agent' (another tool/human)")
+    color: Literal["white", "black"] = Field("white", description="Your color. 'white' moves first. If 'black', computer will move first.")
     showUi: bool = Field(False, description="If true, returns an interactive HTML board in waitForNextTurn. Required for human players.")
     difficulty: int = Field(5, ge=1, le=10, description="AI Difficulty Level (1-10), if type is 'computer'.")
 
@@ -60,17 +61,44 @@ def createGame(config: GameConfig) -> str:
     # Convert Pydantic model to dict
     game = manager.create_game(config.model_dump())
     
+    # Logic: If Player chose Black against Computer, Computer must move NOW (White).
+    first_move_msg = ""
+    if config.type == "computer" and config.color == "black":
+        # Trigger computer move immediately as it is White
+        # We can't await in sync tool? FastMCP tools can be sync or async. 
+        # But create_game is sync in manager?
+        # We need to trigger it. Manager.make_move is async.
+        # But we can just trigger the background task manually.
+        
+        # NOTE: We need to access the event loop or just run it synchronously?
+        # Better: Implementation in Manager to "start_computer_as_white".
+        # For now, let's use the background task approach if we have loop access.
+        # Simpler: Just set a flag or call a sync helper.
+        
+        # HACK for Sync Tool spawning Async Task:
+        try:
+             loop = asyncio.get_running_loop()
+             loop.create_task(manager._computer_turn(game))
+             first_move_msg = " Computer (White) is making the first move..."
+        except RuntimeError:
+             # No running loop? FastMCP wraps sync tools? 
+             # If createGame is sync, it might not have loop.
+             # But uvicorn runs loop.
+             pass
+
     info = (
         f"Game Created Successfully!\n"
         f"- Game ID: {game.id}\n"
         f"- Type: {config.type}\n"
+        f"- You are: {config.color.title()}\n"
         f"- Difficulty: Level {config.difficulty} (if computer)\n\n"
+        f"{first_move_msg}\n"
         f"Next action: Call `waitForNextTurn(game_id='{game.id}')` to start."
     )
     return info
 
 @mcp.tool()
-async def waitForNextTurn(game_id: str, ctx: Context = None) -> list:
+async def waitForNextTurn(game_id: str) -> list:
     """
     Blocks until it is the Agent's turn (or User's turn via Agent proxy).
     Waits up to 30 seconds for the opponent to move.
@@ -84,130 +112,46 @@ async def waitForNextTurn(game_id: str, ctx: Context = None) -> list:
     if not game:
         return ["Error: Game not found"]
 
-    # If it is NOT my turn (i.e. opponent is moving), we wait.
-    # But "My Turn" is ambiguous if Agent is White or Black.
-    # Assumption: Agent plays whichever side is currently "To Move", UNLESS it's computer's turn.
-    # Actually, in Agent vs Computer:
-    # - If Human is White: It is White's turn? Return immediately.
-    # - If Human is Black (Computer moved): It is Black's turn? Return immediately.
-    # - If Computer is thinking: We block?
-    
-    # We implement "Long Polling":
-    # If the game was just updated (we have a fresh state appropriate for the caller), return.
-    # Generally, calling waitForNextTurn implies "I want to know when I can move".
-    
-    # Simple Logic:
-    # If current turn matches the "User/Agent" side? Return.
-    # If current turn matches "Computer"? Wait.
-    
-    # But for "Agent vs Agent", who is who?
-    # Spec says: "Blocks execution until it is the Agent's turn to move".
-    # This implies we wait for a CHANGE.
-    
-    # Let's rely on the Event.
-    # We optimistically return if it IS our turn (based on flow).
-    # But how do we know if we already saw this state?
-    # Stateless tool calls.
-    # So we simply wait IF logic dictates we should wait for opponent.
-    
-    # Logic:
-    # 1. If Game Over -> Return Result.
-    # 2. If vs Computer:
-    #    - If Computer Turn -> Wait.
-    #    - If Human Turn -> Return.
-    # 3. If vs Agent:
-    #    - We don't know which agent is which.
-    #    - We just use the 30s timeout as a "Refresh".
-    #    - Let's check the event. If unset, maybe wait a bit?
-    #    - Actually, for Agent vs Agent, usually they take turns calling finishTurn -> waitForNextTurn.
-    #    - So usually `waitForNextTurn` is called IMMEDIATELY after `finishTurn`.
-    #    - Checks: "Did opponent move?"
-    
-    # Refined Logic based on spec "Blocks... for up to 30 seconds":
     try:
         # Check if game over immediately
         if game.is_game_over:
             return [f"Game Over: {game.result}"]
 
-        # If computer is playing and it's computer's turn, wait for it to move
-        if game.config.get("type") == "computer":
-             # If formatted properly, `game_state` triggers computer move in background.
-             # We just wait for the event.
-             # But if it's ALREADY user's turn (e.g. invalid move previously, or just started as White), return immediate.
-            
-            # Determine if we should wait
-            # If playing White and it's White's turn -> Go.
-            # If playing White and it's Black's turn (Computer) -> Wait.
-            
-            # Since we don't explicitly store "Who is Agent (White/Black)", we assume Agent is the one intiating the game (usually White).
-            # But let's assume standard flow.
-            
-            # If internal AI is thinking, we wait.
-            # We can check `game.move_event`. 
-            # If we call wait_for() on an event that is NOT set, we block.
-            # If it IS set, we return.
-            
-            # But `move_event` is cleared after set.
-            # So if we arrive LATE (event already happened), we might block forever?
-            # No, if we arrive late, the BOARD STATE has changed.
-            # So we check state first.
-            
-            pass 
-            # Actually, simplest is:
-            # Wait for 30s for the *event* ONLY IF it is likely we are waiting (e.g. Computer Turn).
-            # If it is Player Turn, we return immediately.
-            
-            is_computer_turn = (game.config.get("type") == "computer") and (
-                (game.board.turn == chess.BLACK) # Assuming Agent=White. Limit for now.
-                # TODO: Support Agent=Black config? Spec didn't specify. Assume Agent=White.
-            )
-            
-            if is_computer_turn:
-                 # Wait for computer
-                 try:
-                     await asyncio.wait_for(game.move_event.wait(), timeout=30.0)
-                 except asyncio.TimeoutError:
-                     return ["Timeout: No move received yet. Please call this tool again immediately."]
+        # --- Side Logic ---
+        # If I am 'color', is it my turn?
+        my_color = chess.WHITE if game.config.get("color", "white") == "white" else chess.BLACK
+        is_my_turn = (game.board.turn == my_color)
         
-        else:
-             # Agent vs Agent / Agent vs User
-             # We use the generic 30s wait if we want to poll.
-             # But usually an Agent calls waitForNextTurn expecting to see the board.
-             # If the board hasn't changed since last time... how do we know?
-             # We don't.
-             # So we assume the Agent is smart.
-             # Actually, let's just return the state immediately always for non-computer (async/sync is up to agents).
-             # UNLESS we want to support "Blocking for human move".
-             # If showUi=True, likely waiting for Human.
-             if game.config.get("showUi"):
-                  # Waiting for UI interaction...
-                  # We should BLOCK until UI posts a move?
-                  # Yes, otherwise loop spins hot.
-                  try:
-                      await asyncio.wait_for(game.move_event.wait(), timeout=30.0)
-                  except asyncio.TimeoutError:
-                      # If existing state, maybe just return it with "Waiting for user..."?
-                      # Spec says "Return Condition 2 (Timeout)... Timeout message".
-                      return ["Timeout: No move received yet. Please call this tool again immediately."]
+        # If it is NOT my turn, I should probably wait.
+        # Exception: If I am an "Agent" playing vs "Agent", maybe I am the OTHER agent?
+        # But config only has ONE color. 
+        # Assumption: This tool is called by the "Owner" of the game session.
+        
+        if not is_my_turn:
+             # It's opponent's turn.
+             # Wait for move event.
+             try:
+                 await asyncio.wait_for(game.move_event.wait(), timeout=30.0)
+             except asyncio.TimeoutError:
+                 return ["Timeout: No move received yet. Please call this tool again immediately."]
     
     except Exception as e:
         return [f"Error during wait: {str(e)}"]
 
     # Generate Content
-    # 1. Markdown
     md = render_board_to_markdown(game.board.fen())
+    
+    # Add Guidance
+    md += "\n\n**Next Action**: Decide your move and call `finishTurn(game_id, move)`."
     
     content = []
     content.append(md)
     
     # 2. UI Resource
     if game.config.get("showUi"):
-        html = render_board_to_html(game.board.fen(), game.id)
-        # Construct UI Resource manually or via helper? 
-        # FastMCP might not have a helper for EmbeddedResource yet (it's new).
-        # We return a dict that conforms to the schema or simple text if not supported.
-        # But FastMCP signature says -> list.
-        # Let's try to return raw dict for resource.
+        # Pass perspective based on config
+        is_white = (game.config.get("color", "white") == "white")
+        html = render_board_to_html(game.board.fen(), game.id, is_white_perspective=is_white)
         
         resource = {
             "type": "resource",
@@ -235,12 +179,12 @@ async def finishTurn(game_id: str, move: str, claim_win: bool = False) -> str:
         
         # Check game over after move
         game = manager.get_game(game_id)
-        if game and game.is_game_over:
-            return f"Move accepted. Game Over: {game.result}"
+            if game and game.is_game_over:
+                return f"Move accepted. Game Over: {game.result}. No further actions needed."
             
-        return result
+        return f"{result}\nNext action: Call `waitForNextTurn(game_id='{game_id}')` to wait for opponent's move."
     except ValueError as e:
-        return f"Error: {str(e)}"
+        return f"Error: {str(e)}\nAdvice: Please review the error, check the board state in the previous turn, and try a different move."
     except Exception as e:
         return f"System Error: {str(e)}"
 

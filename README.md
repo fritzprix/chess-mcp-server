@@ -19,14 +19,11 @@ Capable of visualizing the board in real-time HTML, understanding spatial relati
 -   Python 3.10+
 -   An MCP Client (e.g., [Claude Desktop](https://claude.ai/download), [Cursor](https://cursor.sh/))
 
-### 1. Clone & Setup
-```bash
-git clone https://github.com/your-repo/chess-mcp-server.git
-cd chess-mcp-server
+### 1. Installation
+You can install directly from PyPI:
 
-python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+```bash
+pip install chess-mcp-server
 ```
 
 ### 2. Configure MCP Client
@@ -37,15 +34,38 @@ Add the following to your MCP Client configuration file (e.g., `~/Library/Applic
 {
   "mcpServers": {
     "chess": {
-      "command": "/absolute/path/to/chess-mcp-server/.venv/bin/python",
-      "args": ["-m", "src.mcp_server"],
-      "cwd": "/absolute/path/to/chess-mcp-server"
+      "command": "uvx",
+      "args": ["chess-mcp-server"]
     }
   }
 }
 ```
 
-> **Note**: Replace `/absolute/path/to/...` with the full path to where you cloned the repository.
+*Alternatively, using pip installation:*
+```json
+{
+  "mcpServers": {
+    "chess": {
+      "command": "python",
+      "args": ["-m", "src.mcp_server"]
+    }
+  }
+}
+```
+
+## 🛠️ Development
+
+If you want to modify the code:
+
+1.  **Clone & Setup**
+    ```bash
+    git clone https://github.com/fritzprix/chess-mcp-server.git
+    cd chess-mcp-server
+    
+    python -m venv .venv
+    source .venv/bin/activate
+    pip install -r requirements.txt
+    ```
 
 ## 🎮 How to Play
 

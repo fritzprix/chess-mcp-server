@@ -86,10 +86,12 @@ class GameManager:
         try:
             move = chess.Move.from_uci(move_uci)
         except ValueError:
-            raise ValueError(f"Invalid UCI move format: {move_uci}")
+            raise ValueError(f"Invalid UCI move format: '{move_uci}'. Please use standard format like 'e2e4' (start_square+end_square).")
             
         if move not in game.board.legal_moves:
-            raise ValueError(f"Illegal move: {move_uci}")
+             # Create a helpful list of some legal moves
+            sample_moves = ", ".join([str(m) for m in list(game.board.legal_moves)[:3]])
+            raise ValueError(f"Illegal move: '{move_uci}'. Review the board state. Sample legal moves: {sample_moves}...")
             
         # Execute Move
         game.board.push(move)

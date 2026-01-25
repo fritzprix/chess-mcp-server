@@ -25,7 +25,15 @@ def render_board_to_markdown(fen: str) -> str:
             row_content += f" {symbol} |"
         lines.append(row_content)
     
-    return "\n".join(lines)
+    # 5. Join lines to form the final string
+    output = "\n".join(lines)
+    
+    # 6. Append State Info
+    turn_text = "White" if board.turn == chess.WHITE else "Black"
+    output += f"\n\n**Turn**: {turn_text} to move"
+    output += f"\n**FEN**: `{fen}`"
+    
+    return output
 
 def render_board_to_html(fen: str, game_id: str, is_white_perspective: bool = True) -> str:
     """
@@ -45,29 +53,42 @@ def render_board_to_html(fen: str, game_id: str, is_white_perspective: bool = Tr
     # Let's implement a simple "Click to Move" table-based UI with JS, 
     # as it's dependency-free and follows the "Production-level... without internet connectivity" hint in reference.
     
+    display_turn = "White" if board.turn == chess.WHITE else "Black"
+    user_side = "White" if is_white_perspective else "Black"
+    
     html = f"""
     <!DOCTYPE html>
     <html>
     <head>
     <style>
-        body {{ font-family: sans-serif; display: flex; flex-direction: column; align-items: center; }}
-        .board {{ display: grid; grid-template-columns: repeat(8, 40px); grid-template-rows: repeat(8, 40px); border: 2px solid #333; }}
-        .square {{ width: 40px; height: 40px; display: flex; justify-content: center; align-items: center; font-size: 30px; cursor: pointer; }}
-        .white {{ background-color: #f0d9b5; }}
-        .black {{ background-color: #b58863; }}
-        .selected {{ background-color: #7b61ff !important; }}
-        .controls {{ margin-top: 10px; display: flex; flex-direction: column; gap: 5px; }}
-        input, button {{ padding: 5px; }}
-        #status {{ margin-top: 10px; font-weight: bold; }}
+        body {{ font-family: sans-serif; display: flex; flex-direction: column; align-items: center; background-color: #2c2c2c; color: #f0f0f0; }}
+        h2 {{ margin-bottom: 5px; }}
+        .info {{ margin-bottom: 15px; text-align: center; }}
+        .board {{ display: grid; grid-template-columns: repeat(8, 45px); grid-template-rows: repeat(8, 45px); border: 5px solid #4a4a4a; }}
+        .square {{ width: 45px; height: 45px; display: flex; justify-content: center; align-items: center; font-size: 35px; cursor: pointer; user-select: none; }}
+        .white {{ background-color: #eeeed2; color: black; }}
+        .black {{ background-color: #769656; color: black; }}
+        .selected {{ background-color: #bbcb2b !important; }}
+        .controls {{ margin-top: 20px; display: flex; flex-direction: column; gap: 10px; background: #3c3c3c; padding: 15px; border-radius: 8px; }}
+        input, button {{ padding: 8px; border-radius: 4px; border: none; }}
+        button {{ background-color: #769656; color: white; cursor: pointer; font-weight: bold; }}
+        button:hover {{ background-color: #567636; }}
+        #status {{ margin-top: 10px; font-weight: bold; color: #ffd700; height: 20px; }}
     </style>
     </head>
     <body>
-        <h2>Game: {game_id}</h2>
+        <h2>Chess MCP</h2>
+        <div class="info">
+            <div>Game ID: {game_id}</div>
+            <div style="font-size: 1.1em; margin-top: 5px;">You are: <strong>{user_side}</strong></div>
+            <div style="color: #aaa;">To Move: {display_turn}</div>
+        </div>
+        
         <div id="board" class="board"></div>
         
         <div class="controls">
             <div>
-                <label>Move (UCI): <input type="text" id="uciInput" placeholder="e2e4"></label>
+                <label>Move (UCI): <input type="text" id="uciInput" placeholder="e.g. e2e4"></label>
             </div>
             <div>
                 <label><input type="checkbox" id="chkClaimWin"> Claim Checkmate/Win</label>
@@ -81,37 +102,54 @@ def render_board_to_html(fen: str, game_id: str, is_white_perspective: bool = Tr
         const gameId = "{game_id}";
         const isWhitePerspective = {'true' if is_white_perspective else 'false'};
         
-        // Simple FEN parser to render board
         function renderBoard() {{
             const boardEl = document.getElementById('board');
             boardEl.innerHTML = '';
             
             const rows = fen.split(' ')[0].split('/');
             
+            // FEN rows are Rank 8 down to Rank 1
+            // If White Perspective: Render Row 0 (Rank 8) to Row 7 (Rank 1)
+            // If Black Perspective: Render Row 7 (Rank 1) to Row 0 (Rank 8) ? 
+            // Actually, we just need to iterate the grid differently.
+            
+            // Let's create a 2D array first for easier manipulation
+            let grid = [];
             for (let r = 0; r < 8; r++) {{
-                let fileIdx = 0;
-                // Parse rank string (e.g., "rnbqkbnr")
+                let rowArr = [];
                 const rankStr = rows[r];
                 for (let i = 0; i < rankStr.length; i++) {{
                     const char = rankStr[i];
                     if (isNaN(char)) {{
-                        // It's a piece
-                        createSquare(r, fileIdx, char);
-                        fileIdx++;
+                        rowArr.push(char);
                     }} else {{
-                        // It's a number (empty spaces)
                         const empties = parseInt(char);
                         for (let k = 0; k < empties; k++) {{
-                            createSquare(r, fileIdx, null);
-                            fileIdx++;
+                            rowArr.push(null);
                         }}
                     }}
                 }}
+                grid.push(rowArr);
+            }}
+            
+            // Render Loops
+            // White: r=0 (Rank 8) -> r=7 (Rank 1). c=0 (File a) -> c=7 (File h)
+            // Black: r=7 (Rank 1) -> r=0 (Rank 8). c=7 (File h) -> c=0 (File a)
+            
+            const startR = isWhitePerspective ? 0 : 7;
+            const endR = isWhitePerspective ? 8 : -1;
+            const stepR = isWhitePerspective ? 1 : -1;
+            
+            const startC = isWhitePerspective ? 0 : 7;
+            const endC = isWhitePerspective ? 8 : -1;
+            const stepC = isWhitePerspective ? 1 : -1;
+            
+            for (let r = startR; r !== endR; r += stepR) {{
+                for (let c = startC; c !== endC; c += stepC) {{
+                     createSquare(r, c, grid[r][c]);
+                }}
             }}
         }}
-        
-        // Helper to check capitalization
-        function isUpper(str) {{ return str === str.toUpperCase(); }}
         
         const pieceMap = {{
             'r': '♜', 'n': '♞', 'b': '♝', 'q': '♛', 'k': '♚', 'p': '♟',
@@ -122,36 +160,43 @@ def render_board_to_html(fen: str, game_id: str, is_white_perspective: bool = Tr
 
         function createSquare(row, col, pieceChar) {{
             const div = document.createElement('div');
-            // Determine color (even sum = light/white, odd sum = dark/black)
+            // Color logic: (row+col)%2==0 is Light.
+            // But 'row' index from FEN (0=Rank8) matches standard odd/even check?
+            // Rank 8 (index 0) + File a (index 0) = 0 -> Light. Correct (a8 is light).
             const isLight = (row + col) % 2 === 0;
             div.className = 'square ' + (isLight ? 'white' : 'black');
+            
+            // Store logical coordinates for click handling
             div.dataset.row = row;
             div.dataset.col = col;
             
             if (pieceChar) {{
                 div.textContent = pieceMap[pieceChar] || pieceChar;
-                // Basic coloring for symbols if needed, but unicode is B&W usually
             }}
             
-            div.onclick = () => onSquareClick(row, col);
+            div.onclick = () => onSquareClick(row, col, div);
             document.getElementById('board').appendChild(div);
         }}
 
-        function onSquareClick(row, col) {{
+        function onSquareClick(row, col, divElement) {{
             const file = String.fromCharCode(97 + col);
             const rank = 8 - row;
             const coord = file + rank;
             
+            // Clear previous selection highlight
+            document.querySelectorAll('.selected').forEach(el => el.classList.remove('selected'));
+            
             if (!selectedSq) {{
                 // Select From
                 selectedSq = coord;
+                divElement.classList.add('selected');
                 document.getElementById('status').innerText = "Selected: " + coord;
             }} else {{
                 // Select To
                 const move = selectedSq + coord;
                 document.getElementById('uciInput').value = move;
-                selectedSq = null;
-                document.getElementById('status').innerText = "Move setup: " + move;
+                selectedSq = null; // Reset selection
+                 document.getElementById('status').innerText = "Ready to submit: " + move;
             }}
         }}
 
@@ -176,6 +221,8 @@ def render_board_to_html(fen: str, game_id: str, is_white_perspective: bool = Tr
             }}, '*');
             
             document.getElementById('status').innerText = "Submitted: " + move + "...";
+            // Disable button to prevent double submit
+            document.querySelector('button').disabled = true;
         }}
 
         renderBoard();
