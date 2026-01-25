@@ -1,0 +1,5 @@
+mcp[cli]
+python-chess
+fastapi
+uvicorn
+jinja2
