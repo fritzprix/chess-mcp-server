@@ -48,6 +48,26 @@ class TestChessServer(unittest.TestCase):
         # Running multiple times to ensure it returns a valid move at least.
         move = ai.get_move(board, level=1)
         self.assertIn(move, board.legal_moves)
+    
+    def test_rendering_content(self):
+        from src.rendering import render_board_to_markdown
+        md = render_board_to_markdown(chess.Board().fen())
+        self.assertIn("**Turn**: White to move", md)
+        self.assertIn("**FEN**:", md)
+
+    def test_actionable_error_format(self):
+        config = {"type": "agent"}
+        game = self.manager.create_game(config)
+        
+        # 1. Invalid Format
+        with self.assertRaises(ValueError) as cm:
+             asyncio.run(self.manager.make_move(game.id, "invalid_format"))
+        self.assertIn("Please use standard format", str(cm.exception))
+        
+        # 2. Illegal Move Advice
+        with self.assertRaises(ValueError) as cm:
+             asyncio.run(self.manager.make_move(game.id, "e2e8")) # Impossible move
+        self.assertIn("Sample legal moves:", str(cm.exception))
 
 if __name__ == '__main__':
     unittest.main()

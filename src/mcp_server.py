@@ -179,8 +179,8 @@ async def finishTurn(game_id: str, move: str, claim_win: bool = False) -> str:
         
         # Check game over after move
         game = manager.get_game(game_id)
-            if game and game.is_game_over:
-                return f"Move accepted. Game Over: {game.result}. No further actions needed."
+        if game and game.is_game_over:
+            return f"Move accepted. Game Over: {game.result}. No further actions needed."
             
         return f"{result}\nNext action: Call `waitForNextTurn(game_id='{game_id}')` to wait for opponent's move."
     except ValueError as e:
