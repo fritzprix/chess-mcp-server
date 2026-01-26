@@ -25,6 +25,12 @@ dependencies = [
     "jinja2",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+]
+
 [project.urls]
 Homepage = "https://github.com/fritzprix/chess-mcp-server"
 Issues = "https://github.com/fritzprix/chess-mcp-server/issues"
