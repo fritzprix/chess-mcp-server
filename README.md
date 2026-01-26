@@ -1,5 +1,7 @@
 # ♟️ Chess MCP Server
 
+[![PyPI version](https://badge.fury.io/py/chess-mcp-server.svg)](https://badge.fury.io/py/chess-mcp-server)
+
 **Give your AI Agent eyes to see the board and hands to make the move.**
 
 This is not just a chess API. It's a **Model Context Protocol (MCP)** server designed to let Large Language Models (LLMs) like Claude play chess *agentically*. 
@@ -12,6 +14,17 @@ Capable of visualizing the board in real-time HTML, understanding spatial relati
 -   **Hybrid AI Engine**: Adjustable difficulty from "Random Blunderer" (Level 1) to "Minimax Master" (Level 10).
 -   **Agent vs. Agent**: Let two AI personalities battle it out.
 -   **Web Dashboard**: Automatically launches a local sidecar dashboard (`http://localhost:8080`) to monitor all active games.
+
+## 🧰 Tools API
+
+| Tool | Description |
+| :--- | :--- |
+| `createGame` | Initializes a new chess game session against Computer or another Agent. |
+| `joinGame` | Joins an existing game using its Game ID. |
+| `finishTurn` | Submits a move (algebraic or UCI) and optionally claims a win. |
+| `waitForNextTurn` | Long-polling tool that waits for the opponent's move. |
+
+> For full specification, see [docs/spec/tools.md](docs/spec/tools.md).
 
 ## 📦 Installation
 
@@ -64,7 +77,7 @@ If you want to modify the code:
     
     python -m venv .venv
     source .venv/bin/activate
-    pip install -r requirements.txt
+    pip install -e .
     ```
 
 ## 🎮 How to Play
@@ -75,6 +88,11 @@ Once the server is connected, you can ask your Agent to start a game.
 Ask: *"Start a new chess game against the computer at level 5."*
 -   The Agent calls `createGame`.
 -   **Pro Tip**: You can also ask *"I want to play against YOU. Create a game where you are White."*
+
+### Join an Existing Game
+If you have a Game ID (e.g., from another agent), you can ask: *"Join game [Game_ID]"*.
+-   The Agent calls `joinGame`.
+
 
 ### The Game Loop
 1.  **Your Move**:
