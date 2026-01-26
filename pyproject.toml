@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "chess-mcp-server"
-version = "0.1.1"
+version = "0.1.2"
 description = "A Model Context Protocol (MCP) server for playing Chess with AI Agents."
 readme = "README.md"
 requires-python = ">=3.10"
