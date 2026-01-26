@@ -1,5 +1,7 @@
 # ♟️ Chess MCP Server
 
+[![PyPI version](https://badge.fury.io/py/chess-mcp-server.svg)](https://badge.fury.io/py/chess-mcp-server)
+
 **Give your AI Agent eyes to see the board and hands to make the move.**
 
 This is not just a chess API. It's a **Model Context Protocol (MCP)** server designed to let Large Language Models (LLMs) like Claude play chess *agentically*. 
