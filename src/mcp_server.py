@@ -7,20 +7,22 @@ from typing import Optional, Literal
 from mcp.server.fastmcp import FastMCP, Context
 from pydantic import BaseModel, Field
 
-# We use relative imports assuming this is run as a module (python -m src.mcp_server)
-# or ensure PYTHONPATH is set.
-try:
-    from .game_state import GameManager
-    from .rendering import render_board_to_markdown, render_board_to_html
-    from .web_dashboard import start_dashboard
-except ImportError:
-    # Fallback for direct execution if path not set
-    import sys
-    import os
-    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from src.game_state import GameManager
-    from src.rendering import render_board_to_markdown, render_board_to_html
-    from src.web_dashboard import start_dashboard
+# Force absolute imports by ensuring project root is in path
+import sys
+import os
+
+# Ensure the project root is in sys.path
+# This allows 'src.game_state' to be imported reliably
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(current_dir)
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+# Absolute imports
+from src.game_state import GameManager
+from src.rendering import render_board_to_markdown, render_board_to_html
+from src.web_dashboard import start_dashboard
+
 
 # Initialize FastMCP
 mcp = FastMCP("Chess Server")
@@ -31,9 +33,8 @@ DASHBOARD_PORT = 8080
 
 @mcp.tool()
 def createGame(
-    type: Literal["computer", "agent"] = Field(..., description="Play against 'computer' (AI) or 'agent' (another tool/human)"),
+    type: Literal["computer", "agent", "human"] = Field(..., description="Opponent type. 'computer': Play against AI (No UI). 'agent': Play against another Agent (No UI). 'human': Play against Human (Returns UI)."),
     color: Literal["white", "black"] = Field("white", description="Your color. 'white' moves first. If 'black', computer will move first."),
-    showUi: bool = Field(False, description="If true, returns an interactive HTML board in waitForNextTurn. Required for human players."),
     difficulty: int = Field(5, ge=1, le=10, description="AI Difficulty Level (1-10), if type is 'computer'.")
 ) -> list:
     """
@@ -41,6 +42,9 @@ def createGame(
     Returns the Game ID and instructions.
     """
     # Construct config dict manually
+    # Derive showUi from type
+    showUi = (type == "human")
+    
     config = {
         "type": type,
         "color": color,

@@ -18,7 +18,7 @@ class TestChessServer(unittest.TestCase):
         self.assertEqual(game.config["difficulty"], 1)
 
     def test_make_move_logic(self):
-        config = {"type": "agent", "showUi": False}
+        config = {"type": "agent"}
         game = self.manager.create_game(config)
         
         # White moves e4
