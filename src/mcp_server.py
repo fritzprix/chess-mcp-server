@@ -2,6 +2,7 @@ import asyncio
 import threading
 import webbrowser
 import logging
+import chess
 from typing import Optional, Literal
 from mcp.server.fastmcp import FastMCP, Context
 from pydantic import BaseModel, Field
@@ -34,7 +35,7 @@ def createGame(
     color: Literal["white", "black"] = Field("white", description="Your color. 'white' moves first. If 'black', computer will move first."),
     showUi: bool = Field(False, description="If true, returns an interactive HTML board in waitForNextTurn. Required for human players."),
     difficulty: int = Field(5, ge=1, le=10, description="AI Difficulty Level (1-10), if type is 'computer'.")
-) -> str:
+) -> list:
     """
     Initializes a new chess game session.
     Returns the Game ID and instructions.
@@ -48,27 +49,77 @@ def createGame(
     }
     game = manager.create_game(config)
     
-    # Logic: If Player chose Black against Computer, Computer must move NOW (White).
-    first_move_msg = ""
-    if type == "computer" and color == "black":
-        # Trigger computer move immediately as it is White
-        try:
-             loop = asyncio.get_running_loop()
-             loop.create_task(manager._computer_turn(game))
-             first_move_msg = " Computer (White) is making the first move..."
-        except RuntimeError:
-             pass
-
-    info = (
+    content = []
+    
+    base_info = (
         f"Game Created Successfully!\n"
         f"- Game ID: {game.id}\n"
         f"- Type: {type}\n"
         f"- You are: {color.title()}\n"
-        f"- Difficulty: Level {difficulty} (if computer)\n\n"
-        f"{first_move_msg}\n"
-        f"Next action: Call `waitForNextTurn(game_id='{game.id}')` to start."
+        f"- Difficulty: Level {difficulty} (if computer)\n"
     )
-    return info
+
+    # Scenarios:
+    # 1. We are White -> It is OUR turn. Show board, prompt for move.
+    # 2. We are Black -> It is Opponent's turn. If Computer, trigger it. Prompt wait.
+
+    if color == "white":
+        # My Turn logic
+        md = render_board_to_markdown(game.board.fen())
+        md += "\n\n**Next Action**: Decide your move and call `finishTurn(game_id, move)`."
+        
+        full_text = base_info + "\n" + md
+        content.append(full_text)
+        
+        if showUi:
+            is_white = True
+            html = render_board_to_html(game.board.fen(), game.id, is_white_perspective=is_white)
+            resource = {
+                "type": "resource",
+                "resource": {
+                    "uri": f"ui://chess/{game.id}",
+                    "mimeType": "text/html",
+                    "text": html
+                }
+            }
+            content.append(resource)
+            
+    else:
+        # Opponent's Turn logic
+        first_move_msg = ""
+        if type == "computer":
+            # Trigger computer move immediately as it is White
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(manager._computer_turn(game))
+                first_move_msg = " Computer (White) is making the first move..."
+            except RuntimeError:
+                pass
+            
+            full_text = base_info + f"\n{first_move_msg}\nNext action: Call `waitForNextTurn(game_id='{game.id}')` to start."
+            content.append(full_text)
+            
+        else:
+            # Opponent is Human (or another Agent via Tool, but assuming Human if showUi).
+            full_text = base_info + "\nWaiting for Human Opponent to move..."
+            content.append(full_text)
+            
+            if showUi:
+                # Return UI for Human to move
+                is_white = (color == "white")
+                html = render_board_to_html(game.board.fen(), game.id, is_white_perspective=is_white)
+                
+                resource = {
+                    "type": "resource",
+                    "resource": {
+                        "uri": f"ui://chess/{game.id}",
+                        "mimeType": "text/html",
+                        "text": html
+                    }
+                }
+                content.append(resource)
+
+    return content
 
 @mcp.tool()
 async def waitForNextTurn(
@@ -141,7 +192,7 @@ async def finishTurn(
     game_id: str = Field(..., description="The ID of the active game."),
     move: str = Field(..., description="The move in UCI format (e.g., 'e2e4')."),
     claim_win: bool = Field(False, description="Set to true if you are claiming Checkmate or Win with this move.")
-) -> str:
+) -> list:
     """
     Submits a move to the game server.
     """
@@ -150,18 +201,112 @@ async def finishTurn(
         
         # Check game over after move
         game = manager.get_game(game_id)
+        # Determine who just moved and who is next.
+        # If I am 'color', and now it is 'color' turn, then Opponent just moved.
+        # If now it is NOT 'color' turn, then I just moved.
+    
+        agent_color = chess.WHITE if game.config.get("color", "white") == "white" else chess.BLACK
+        is_agent_turn = (game.board.turn == agent_color)
+    
+        content = []
+    
+    # Base text
         if game and game.is_game_over:
-            return f"Move accepted. Game Over: {game.result}. No further actions needed."
+            msg = f"Move accepted. Game Over: {game.result}. No further actions needed."
+        else:
+            msg = f"{result}"
             
-        return f"{result}\nNext action: Call `waitForNextTurn(game_id='{game_id}')` to wait for opponent's move."
+        # Determine who just moved and who is next.
+        agent_color = chess.WHITE if game.config.get("color", "white") == "white" else chess.BLACK
+        is_agent_turn = (game.board.turn == agent_color)
+        
+        content = []
+        
+        # Logic for return content
+        if is_agent_turn:
+            # 1. Opponent (Human checkmated or moved) -> Agent.
+            # It is now Agent's turn.
+            # Return Text Board so Agent can see state.
+            msg += "\nIt is your turn."
+            content.append(msg)
+            
+            md = render_board_to_markdown(game.board.fen())
+            md += "\n\n**Next Action**: Decide your move and call `finishTurn(game_id, move)`."
+            content.append(md)
+            
+        else:
+            # 2. Agent -> Opponent.
+            # It is Opponent's turn.
+            
+            if game.config.get("type") == "computer":
+                 msg += "\nWaiting for Computer..."
+                 msg += f"\nNext action: Call `waitForNextTurn(game_id='{game_id}')` to wait for opponent's move."
+                 content.append(msg)
+                 
+            else:
+                 # Opponent is Human (or another Agent via Tool, but assuming Human if showUi).
+                 msg += "\nWaiting for Human Opponent..."
+                 content.append(msg)
+                 
+                 if game.config.get("showUi"):
+                     # Return UI for Human to move
+                     is_white = (game.config.get("color", "white") == "white")
+                     html = render_board_to_html(game.board.fen(), game.id, is_white_perspective=is_white)
+                     
+                     resource = {
+                        "type": "resource",
+                        "resource": {
+                            "uri": f"ui://chess/{game.id}",
+                            "mimeType": "text/html",
+                            "text": html
+                        }
+                    }
+                     content.append(resource)
+
+        return content
+
     except ValueError as e:
-        return f"Error: {str(e)}\nAdvice: Please review the error, check the board state in the previous turn, and try a different move."
+        return [f"Error: {str(e)}\nAdvice: Please review the error, check the board state in the previous turn, and try a different move."]
     except Exception as e:
-        return f"System Error: {str(e)}"
+        return [f"System Error: {str(e)}"]
 
 # --- Entry Point ---
 
+@mcp.tool()
+def joinGame(
+    game_id: str = Field(..., description="The ID of the game to join.")
+) -> list:
+    """
+    Joins an existing chess game.
+    Returns the current board state and turn information.
+    """
+    game = manager.get_game(game_id)
+    if not game:
+        return ["Error: Game not found"]
+    
+    content = []
+    msg = f"Joined Game {game.id} Successfully.\n"
+    
+    # Determine whose turn it is
+    turn_color = "White" if game.board.turn == chess.WHITE else "Black"
+    msg += f"Current Turn: {turn_color}.\n"
+    
+    # Add Board State
+    md = render_board_to_markdown(game.board.fen())
+    
+    msg += "\n" + md
+    msg += "\n\n**Next Action**: Check if it is your turn. If yes, decide move and call `finishTurn`. If no, call `waitForNextTurn`."
+    
+    content.append(msg)
+    return content
+
 # --- Entry Point ---
+
+def launch_dashboard_thread():
+    """
+    Wrapper to start the dashboard in a separate thread.
+    """
+    start_dashboard(port=DASHBOARD_PORT)
 
 def main():
     """

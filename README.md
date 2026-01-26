@@ -13,6 +13,17 @@ Capable of visualizing the board in real-time HTML, understanding spatial relati
 -   **Agent vs. Agent**: Let two AI personalities battle it out.
 -   **Web Dashboard**: Automatically launches a local sidecar dashboard (`http://localhost:8080`) to monitor all active games.
 
+## 🧰 Tools API
+
+| Tool | Description |
+| :--- | :--- |
+| `createGame` | Initializes a new chess game session against Computer or another Agent. |
+| `joinGame` | Joins an existing game using its Game ID. |
+| `finishTurn` | Submits a move (algebraic or UCI) and optionally claims a win. |
+| `waitForNextTurn` | Long-polling tool that waits for the opponent's move. |
+
+> For full specification, see [docs/spec/tools.md](docs/spec/tools.md).
+
 ## 📦 Installation
 
 ### Prerequisites
@@ -64,7 +75,7 @@ If you want to modify the code:
     
     python -m venv .venv
     source .venv/bin/activate
-    pip install -r requirements.txt
+    pip install -e .
     ```
 
 ## 🎮 How to Play
@@ -75,6 +86,11 @@ Once the server is connected, you can ask your Agent to start a game.
 Ask: *"Start a new chess game against the computer at level 5."*
 -   The Agent calls `createGame`.
 -   **Pro Tip**: You can also ask *"I want to play against YOU. Create a game where you are White."*
+
+### Join an Existing Game
+If you have a Game ID (e.g., from another agent), you can ask: *"Join game [Game_ID]"*.
+-   The Agent calls `joinGame`.
+
 
 ### The Game Loop
 1.  **Your Move**:

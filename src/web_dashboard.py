@@ -21,18 +21,36 @@ async def index():
             <td>{g['type']}</td>
             <td>{g['turn']}</td>
             <td>{g['fen']}</td>
+            <td><button class="copy-btn" onclick="copyJoin('{g['id']}')">Copy Join Prompt</button></td>
         </tr>
         """
     
     html = f"""
     <html>
     <head><title>Chess MCP Dashboard</title>
-    <style>table {{ width: 100%; border-collapse: collapse; }} th, td {{ border: 1px solid #ddd; padding: 8px; }} tr:nth-child(even){{background-color: #f2f2f2;}}</style>
+    <style>
+        table {{ width: 100%; border-collapse: collapse; }} 
+        th, td {{ border: 1px solid #ddd; padding: 8px; }} 
+        tr:nth-child(even){{background-color: #f2f2f2;}}
+        .copy-btn {{ cursor: pointer; background: #007bff; color: white; border: none; padding: 5px 10px; border-radius: 3px; }}
+        .copy-btn:hover {{ background: #0056b3; }}
+    </style>
+    <script>
+        function copyJoin(gameId) {{
+            const text = "Please join game " + gameId;
+            navigator.clipboard.writeText(text).then(() => {{
+                alert("Copied to clipboard: " + text);
+            }}).catch(err => {{
+                console.error('Failed to copy: ', err);
+                prompt("Copy this text:", text);
+            }});
+        }}
+    </script>
     </head>
     <body>
     <h1>Active Chess Games</h1>
     <table>
-        <tr><th>ID</th><th>Type</th><th>Turn</th><th>FEN</th></tr>
+        <tr><th>ID</th><th>Type</th><th>Turn</th><th>FEN</th><th>Action</th></tr>
         {rows}
     </table>
     <br><a href="/" style="background:#eee; padding:5px;">Refresh</a>
