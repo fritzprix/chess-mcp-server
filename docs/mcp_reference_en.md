@@ -238,6 +238,14 @@ if __name__ == "__main__":
     mcp.run(transport="stdio")
 ```
 
+### **4.2.1 Best Practices for Tool Schemas**
+
+To ensure LLMs can correctly understand and use your tools, providing a rich schema is critical.
+
+1.  **Avoid `object` or Missing Type Hints**: If you do not provide type hints, FastMCP cannot generate a schema, and the LLM will see the argument as a generic object, leading to poor performance.
+2.  **Use Pydantic Models**: For tools with multiple arguments or complex validation logic, define a Pydantic `BaseModel`. This allows you to group arguments and provide detailed descriptions for each field.
+3.  **Use `Field` and `Annotated`**: Even for simple arguments, use `Field(..., description="...")` to explain what the argument does.
+
 ### **4.3 Python Client Implementation (Low-Level API)**
 
 The client controls the server process using `ClientSession` and the `stdio_client` context manager.
