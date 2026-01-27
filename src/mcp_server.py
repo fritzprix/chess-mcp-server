@@ -69,7 +69,9 @@ def createGame(
 
     if color == "white":
         # My Turn logic
-        md = render_board_to_markdown(game.board.fen())
+        # Pass player color to rendering
+        my_color_str = "White"
+        md = render_board_to_markdown(game.board.fen(), player_color=my_color_str)
         md += "\n\n**Next Action**: Decide your move and call `finishTurn(game_id, move)`."
         
         full_text = base_info + "\n" + md
@@ -165,10 +167,11 @@ async def waitForNextTurn(
         return [f"Error during wait: {str(e)}"]
 
     # Generate Content
-    md = render_board_to_markdown(game.board.fen())
+    my_color_str = game.config.get("color", "white").title()
+    md = render_board_to_markdown(game.board.fen(), player_color=my_color_str)
     
     # Add Guidance
-    md += "\n\n**Next Action**: Decide your move and call `finishTurn(game_id, move)`."
+    md += "\n**Next Action**: Decide your move and call `finishTurn(game_id, move)`."
     
     content = []
     content.append(md)
@@ -234,8 +237,13 @@ async def finishTurn(
             msg += "\nIt is your turn."
             content.append(msg)
             
-            md = render_board_to_markdown(game.board.fen())
-            md += "\n\n**Next Action**: Decide your move and call `finishTurn(game_id, move)`."
+            # Return Text Board so Agent can see state.
+            msg += "\nIt is your turn."
+            content.append(msg)
+            
+            my_color_str = game.config.get("color", "white").title()
+            md = render_board_to_markdown(game.board.fen(), player_color=my_color_str)
+            md += "\n**Next Action**: Decide your move and call `finishTurn(game_id, move)`."
             content.append(md)
             
         else:
@@ -296,9 +304,11 @@ def joinGame(
     msg += f"Current Turn: {turn_color}.\n"
     
     # Add Board State
-    md = render_board_to_markdown(game.board.fen())
+    my_color_str = game.config.get("color", "white").title() if "color" in game.config else None
+    md = render_board_to_markdown(game.board.fen(), player_color=my_color_str)
     
     msg += "\n" + md
+        
     msg += "\n\n**Next Action**: Check if it is your turn. If yes, decide move and call `finishTurn`. If no, call `waitForNextTurn`."
     
     content.append(msg)

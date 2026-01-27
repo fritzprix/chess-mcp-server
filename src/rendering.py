@@ -1,11 +1,12 @@
 import chess
 
-def render_board_to_markdown(fen: str) -> str:
+def render_board_to_markdown(fen: str, player_color: str = None) -> str:
     """
     Converts a FEN string into a Markdown formatted table representation of the board.
     
     Args:
         fen (str): The Forsyth-Edwards Notation string of the game state.
+        player_color (str, optional): The color the agent is playing (e.g. "White", "Black").
         
     Returns:
         str: A multi-line string containing the Markdown table.
@@ -21,7 +22,8 @@ def render_board_to_markdown(fen: str) -> str:
         row_content = f"| **{rank + 1}** |"
         for file in range(8):
             piece = board.piece_at(chess.square(file, rank))
-            symbol = piece.unicode_symbol() if piece else " " 
+            # Use standard algebraic notation (P, n, k, etc.) instead of unicode symbols
+            symbol = piece.symbol() if piece else " " 
             row_content += f" {symbol} |"
         lines.append(row_content)
     
@@ -32,6 +34,11 @@ def render_board_to_markdown(fen: str) -> str:
     turn_text = "White" if board.turn == chess.WHITE else "Black"
     output += f"\n\n**Turn**: {turn_text} to move"
     output += f"\n**FEN**: `{fen}`"
+    
+    if player_color:
+        output += f"\n**You are playing**: {player_color}"
+        
+    output += "\n\n> **Legend**: Uppercase = White (P, N, B, R, Q, K), Lowercase = Black (p, n, b, r, q, k)"
     
     return output
 
