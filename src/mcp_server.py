@@ -99,6 +99,12 @@ def createGame(
         else:
             # Opponent is Human (or another Agent via Tool, but assuming Human if showUi).
             full_text = base_info + "\nWaiting for Human Opponent to move..."
+            
+            if type == "human":
+                full_text += f"\n\n**Next Action**: UI has been returned below for the human player to move. Call `waitForNextTurn(game_id='{game.id}')` when ready to check for the human's move."
+            else:  # agent type
+                full_text += f"\n\n**Next Action**: Call `waitForNextTurn(game_id='{game.id}')` to wait for the other agent's move."
+            
             content.append(types.TextContent(type="text", text=full_text))
             
             if showUi:
@@ -238,7 +244,18 @@ async def finishTurn(
         else:
             # It is NOT agent's turn.
             # Opponent's turn.
-            msg += "\nWaiting for opponent to move..."
+            game_type = game.config.get("type", "computer")
+            
+            if game_type == "computer":
+                msg += "\nWaiting for opponent to move..."
+                msg += f"\n\n**Next Action**: Call `waitForNextTurn(game_id='{game.id}')` to wait for the computer's move."
+            elif game_type == "human":
+                msg += "\nWaiting for opponent to move..."
+                msg += "\n\n**Next Action**: UI has been returned below for the human player to make their move. You will be notified when it's your turn again."
+            else:  # agent
+                msg += "\nWaiting for opponent to move..."
+                msg += f"\n\n**Next Action**: Call `waitForNextTurn(game_id='{game.id}')` to wait for the other agent's move."
+            
             content.append(types.TextContent(type="text", text=msg))
             
             # If showUi is true, we might want to return UI so Human can move?
