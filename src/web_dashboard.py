@@ -9,54 +9,44 @@ from src.rendering import render_board_to_html
 app = FastAPI(title="Chess MCP Dashboard")
 manager = GameManager()
 
+
+import os
+import re
+
+def get_version():
+    try:
+        # Assuming pyproject.toml is in the root, one level up from src
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(current_dir)
+        pyproject_path = os.path.join(project_root, "pyproject.toml")
+        
+        with open(pyproject_path, "r", encoding="utf-8") as f:
+            content = f.read()
+            match = re.search(r'version\s*=\s*"(.*?)"', content)
+            if match:
+                return match.group(1)
+    except Exception:
+        pass
+    return "Unknown"
+
 @app.get("/", response_class=HTMLResponse)
 async def index():
     games = manager.list_games()
+    version = get_version()
     
-    rows = ""
-    for g in games:
-        rows += f"""
-        <tr>
-            <td><a href="/game/{g['id']}">{g['id']}</a></td>
-            <td>{g['type']}</td>
-            <td>{g['turn']}</td>
-            <td>{g['fen']}</td>
-            <td><button class="copy-btn" onclick="copyJoin('{g['id']}')">Copy Join Prompt</button></td>
-        </tr>
-        """
+    from jinja2 import Environment, FileSystemLoader
     
-    html = f"""
-    <html>
-    <head><title>Chess MCP Dashboard</title>
-    <style>
-        table {{ width: 100%; border-collapse: collapse; }} 
-        th, td {{ border: 1px solid #ddd; padding: 8px; }} 
-        tr:nth-child(even){{background-color: #f2f2f2;}}
-        .copy-btn {{ cursor: pointer; background: #007bff; color: white; border: none; padding: 5px 10px; border-radius: 3px; }}
-        .copy-btn:hover {{ background: #0056b3; }}
-    </style>
-    <script>
-        function copyJoin(gameId) {{
-            const text = "Please join game " + gameId;
-            navigator.clipboard.writeText(text).then(() => {{
-                alert("Copied to clipboard: " + text);
-            }}).catch(err => {{
-                console.error('Failed to copy: ', err);
-                prompt("Copy this text:", text);
-            }});
-        }}
-    </script>
-    </head>
-    <body>
-    <h1>Active Chess Games</h1>
-    <table>
-        <tr><th>ID</th><th>Type</th><th>Turn</th><th>FEN</th><th>Action</th></tr>
-        {rows}
-    </table>
-    <br><a href="/" style="background:#eee; padding:5px;">Refresh</a>
-    </body>
-    </html>
-    """
+    # Setup Jinja2
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    templates_dir = os.path.join(current_dir, "templates")
+    env = Environment(loader=FileSystemLoader(templates_dir))
+    template = env.get_template("dashboard.html")
+    
+    html = template.render(
+        games=games,
+        version=version
+    )
+    
     return html
 
 @app.get("/game/{game_id}", response_class=HTMLResponse)
