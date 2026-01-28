@@ -7,6 +7,30 @@ if (-not $Version.StartsWith("v")) {
     $Version = "v$Version"
 }
 
+# Update pyproject.toml
+$CleanVersion = $Version -replace "^v", ""
+$PyProjectFile = "pyproject.toml"
+
+if (Test-Path $PyProjectFile) {
+    $Content = Get-Content $PyProjectFile -Raw
+    $CurrentVersionMatch = [regex]::Match($Content, 'version = "(.*)"')
+    
+    if ($CurrentVersionMatch.Success) {
+        $CurrentVersion = $CurrentVersionMatch.Groups[1].Value
+        
+        if ($CleanVersion -ne $CurrentVersion) {
+            Write-Host "Updating $PyProjectFile from $CurrentVersion to $CleanVersion..." -ForegroundColor Cyan
+            $NewContent = $Content -replace 'version = ".*"', "version = ""$CleanVersion"""
+            Set-Content $PyProjectFile $NewContent
+            
+            Write-Host "Committing version bump..." -ForegroundColor Cyan
+            git add $PyProjectFile
+            git commit -m "chore: bump version to $CleanVersion"
+            git push
+        }
+    }
+}
+
 Write-Host "Preparing to release version $Version..." -ForegroundColor Cyan
 
 # Check if tag exists
