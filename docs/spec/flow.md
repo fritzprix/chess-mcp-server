@@ -26,7 +26,7 @@ This document outlines the expected flow of information between the Agent, the M
 ## Scenario 2: Agent (White) vs Human (Black)
 **Goal**: Agent plays White against a Human (via Browser UI).
 
-1.  **Agent**: Calls `createGame(type="agent", color="white", showUi=true)`.
+1.  **Agent**: Calls `createGame(type="human", color="white")`.
 2.  **Server**: Returns **Board State (Text)**.
     *   *Note*: No UI returned. Agent is White and moves first.
     *   *Next Action*: `finishTurn`
@@ -51,7 +51,7 @@ This document outlines the expected flow of information between the Agent, the M
 ## Scenario 3: Human (White) vs Agent (Black)
 **Goal**: Human plays White against Agent.
 
-1.  **Agent**: Calls `createGame(type="agent", color="black", showUi=true)`.
+1.  **Agent**: Calls `createGame(type="human", color="black")`.
 2.  **Server**: Checks configuration.
     *   Agent is Black -> Human is White.
     *   **Returns**: **UI Resource (HTML)** + "Game Created. Waiting for Human (White) to move.".
@@ -75,7 +75,7 @@ This document outlines the expected flow of information between the Agent, the M
 ## Scenario 4: Agent vs Agent (via `joinGame`)
 **Goal**: Two separate Agents play against each other using `joinGame`.
 
-1.  **Agent 1 (Host)**: Calls `createGame(type="agent", color="white", showUi=false)`.
+1.  **Agent 1 (Host)**: Calls `createGame(type="agent", color="white")`.
     *   **Server Returns**: **Board State (Text)** + `game_id` (e.g., "1234").
     *   *Next Action*: `finishTurn`.
 2.  **Agent 1**: Calls `finishTurn(move="e2e4")`.

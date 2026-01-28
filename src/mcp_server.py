@@ -238,10 +238,6 @@ async def finishTurn(
             msg += "\nIt is your turn."
             content.append(types.TextContent(type="text", text=msg))
             
-            # Return Text Board so Agent can see state.
-            # msg += "\nIt is your turn." # Duplicate line removed
-            # content.append(msg)
-            
             my_color_str = game.config.get("color", "white").title()
             md = render_board_to_markdown(game.board.fen(), player_color=my_color_str)
             md += "\n**Next Action**: Decide your move and call `finishTurn(game_id, move)`."
@@ -260,6 +256,28 @@ async def finishTurn(
                    )
                )
                 content.append(resource)
+        else:
+            # It is NOT agent's turn.
+            # Opponent's turn.
+            msg += "\nWaiting for opponent to move..."
+            content.append(types.TextContent(type="text", text=msg))
+            
+            # If showUi is true, we might want to return UI so Human can move?
+            # Scenario 2: Agent (White) vs Human (Black). Agent moved. Now Human's turn.
+            # We need to return UI for Human.
+            if game.config.get("showUi"):
+                 is_white = (game.config.get("color", "white") == "white")
+                 
+                 html = render_board_to_html(game.board.fen(), game.id, is_white_perspective=is_white)
+                 resource = types.EmbeddedResource(
+                    type="resource",
+                    resource=types.TextResourceContents(
+                        uri=f"ui://chess/{game.id}",
+                        mimeType="text/html",
+                        text=html
+                    )
+                )
+                 content.append(resource)
 
         return content
 
