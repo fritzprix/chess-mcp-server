@@ -218,7 +218,7 @@ def render_board_to_html(fen: str, game_id: str, is_white_perspective: bool = Tr
             
             // Post Message to MCP Host
             window.parent.postMessage({{
-                type: 'action',
+                type: 'tool',
                 action: 'finishTurn',
                 payload: {{
                     game_id: gameId,
