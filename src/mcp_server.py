@@ -78,18 +78,8 @@ def createGame(
         full_text = base_info + "\n" + md
         content.append(types.TextContent(type="text", text=full_text))
         
-        if showUi:
-            is_white = True
-            html = render_board_to_html(game.board.fen(), game.id, is_white_perspective=is_white)
-            resource = types.EmbeddedResource(
-                type="resource",
-                resource=types.TextResourceContents(
-                    uri=f"ui://chess/{game.id}",
-                    mimeType="text/html",
-                    text=html
-                )
-            )
-            content.append(resource)
+        # Note: No UI returned when Agent is White and moves first.
+        # UI will be returned after Agent's first move via finishTurn.
             
     else:
         # Opponent's Turn logic
@@ -113,8 +103,10 @@ def createGame(
             
             if showUi:
                 # Return UI for Human to move
-                is_white = (color == "white")
-                html = render_board_to_html(game.board.fen(), game.id, is_white_perspective=is_white)
+                # UI perspective should be from Human's viewpoint, not Agent's
+                # If Agent is Black, Human is White (and vice versa)
+                is_white_perspective = (color == "black")  # Human's color is opposite of Agent's
+                html = render_board_to_html(game.board.fen(), game.id, is_white_perspective=is_white_perspective)
                 
                 resource = types.EmbeddedResource(
                     type="resource",
@@ -242,20 +234,7 @@ async def finishTurn(
             md = render_board_to_markdown(game.board.fen(), player_color=my_color_str)
             md += "\n**Next Action**: Decide your move and call `finishTurn(game_id, move)`."
             content.append(types.TextContent(type="text", text=md))
-            if game.config.get("showUi"):
-                # Return UI for Human to move
-                is_white = (game.config.get("color", "white") == "white")
-                html = render_board_to_html(game.board.fen(), game.id, is_white_perspective=is_white)
-                
-                resource = types.EmbeddedResource(
-                   type="resource",
-                   resource=types.TextResourceContents(
-                       uri=f"ui://chess/{game.id}",
-                       mimeType="text/html",
-                       text=html
-                   )
-               )
-                content.append(resource)
+            # Note: Do NOT return UI when it's Agent's turn (spec: "Does NOT return UI again")
         else:
             # It is NOT agent's turn.
             # Opponent's turn.
@@ -266,9 +245,12 @@ async def finishTurn(
             # Scenario 2: Agent (White) vs Human (Black). Agent moved. Now Human's turn.
             # We need to return UI for Human.
             if game.config.get("showUi"):
-                 is_white = (game.config.get("color", "white") == "white")
+                 # UI perspective should be from Human's viewpoint, not Agent's
+                 # If Agent is White, Human is Black (and vice versa)
+                 agent_color = game.config.get("color", "white")
+                 is_white_perspective = (agent_color == "black")  # Human's color is opposite of Agent's
                  
-                 html = render_board_to_html(game.board.fen(), game.id, is_white_perspective=is_white)
+                 html = render_board_to_html(game.board.fen(), game.id, is_white_perspective=is_white_perspective)
                  resource = types.EmbeddedResource(
                     type="resource",
                     resource=types.TextResourceContents(
