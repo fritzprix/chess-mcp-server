@@ -5,6 +5,7 @@ import logging
 import chess
 from typing import Optional, Literal
 from mcp.server.fastmcp import FastMCP, Context
+import mcp.types as types
 from pydantic import BaseModel, Field
 
 # Force absolute imports by ensuring project root is in path
@@ -75,19 +76,19 @@ def createGame(
         md += "\n\n**Next Action**: Decide your move and call `finishTurn(game_id, move)`."
         
         full_text = base_info + "\n" + md
-        content.append(full_text)
+        content.append(types.TextContent(type="text", text=full_text))
         
         if showUi:
             is_white = True
             html = render_board_to_html(game.board.fen(), game.id, is_white_perspective=is_white)
-            resource = {
-                "type": "resource",
-                "resource": {
-                    "uri": f"ui://chess/{game.id}",
-                    "mimeType": "text/html",
-                    "text": html
-                }
-            }
+            resource = types.EmbeddedResource(
+                type="resource",
+                resource=types.TextResourceContents(
+                    uri=f"ui://chess/{game.id}",
+                    mimeType="text/html",
+                    text=html
+                )
+            )
             content.append(resource)
             
     else:
@@ -103,26 +104,26 @@ def createGame(
                 pass
             
             full_text = base_info + f"\n{first_move_msg}\nNext action: Call `waitForNextTurn(game_id='{game.id}')` to start."
-            content.append(full_text)
+            content.append(types.TextContent(type="text", text=full_text))
             
         else:
             # Opponent is Human (or another Agent via Tool, but assuming Human if showUi).
             full_text = base_info + "\nWaiting for Human Opponent to move..."
-            content.append(full_text)
+            content.append(types.TextContent(type="text", text=full_text))
             
             if showUi:
                 # Return UI for Human to move
                 is_white = (color == "white")
                 html = render_board_to_html(game.board.fen(), game.id, is_white_perspective=is_white)
                 
-                resource = {
-                    "type": "resource",
-                    "resource": {
-                        "uri": f"ui://chess/{game.id}",
-                        "mimeType": "text/html",
-                        "text": html
-                    }
-                }
+                resource = types.EmbeddedResource(
+                    type="resource",
+                    resource=types.TextResourceContents(
+                        uri=f"ui://chess/{game.id}",
+                        mimeType="text/html",
+                        text=html
+                    )
+                )
                 content.append(resource)
 
     return content
@@ -147,7 +148,7 @@ async def waitForNextTurn(
     try:
         # Check if game over immediately
         if game.is_game_over:
-            return [f"Game Over: {game.result}"]
+            return [types.TextContent(type="text", text=f"Game Over: {game.result}")]
 
         # --- Side Logic ---
         # If I am 'color', is it my turn?
@@ -161,10 +162,10 @@ async def waitForNextTurn(
              try:
                  await asyncio.wait_for(game.move_event.wait(), timeout=30.0)
              except asyncio.TimeoutError:
-                 return ["Timeout: No move received yet. Please call this tool again immediately."]
+                 return [types.TextContent(type="text", text="Timeout: No move received yet. Please call this tool again immediately.")]
     
     except Exception as e:
-        return [f"Error during wait: {str(e)}"]
+        return [types.TextContent(type="text", text=f"Error during wait: {str(e)}")]
 
     # Generate Content
     my_color_str = game.config.get("color", "white").title()
@@ -174,7 +175,7 @@ async def waitForNextTurn(
     md += "\n**Next Action**: Decide your move and call `finishTurn(game_id, move)`."
     
     content = []
-    content.append(md)
+    content.append(types.TextContent(type="text", text=md))
     
     # 2. UI Resource
     if game.config.get("showUi"):
@@ -182,14 +183,14 @@ async def waitForNextTurn(
         is_white = (game.config.get("color", "white") == "white")
         html = render_board_to_html(game.board.fen(), game.id, is_white_perspective=is_white)
         
-        resource = {
-            "type": "resource",
-            "resource": {
-                "uri": f"ui://chess/{game.id}",
-                "mimeType": "text/html",
-                "text": html
-            }
-        }
+        resource = types.EmbeddedResource(
+            type="resource",
+            resource=types.TextResourceContents(
+                uri=f"ui://chess/{game.id}",
+                mimeType="text/html",
+                text=html
+            )
+        )
         content.append(resource)
         
     return content
@@ -235,52 +236,37 @@ async def finishTurn(
             # It is now Agent's turn.
             # Return Text Board so Agent can see state.
             msg += "\nIt is your turn."
-            content.append(msg)
+            content.append(types.TextContent(type="text", text=msg))
             
             # Return Text Board so Agent can see state.
-            msg += "\nIt is your turn."
-            content.append(msg)
+            # msg += "\nIt is your turn." # Duplicate line removed
+            # content.append(msg)
             
             my_color_str = game.config.get("color", "white").title()
             md = render_board_to_markdown(game.board.fen(), player_color=my_color_str)
             md += "\n**Next Action**: Decide your move and call `finishTurn(game_id, move)`."
-            content.append(md)
-            
-        else:
-            # 2. Agent -> Opponent.
-            # It is Opponent's turn.
-            
-            if game.config.get("type") == "computer":
-                 msg += "\nWaiting for Computer..."
-                 msg += f"\nNext action: Call `waitForNextTurn(game_id='{game_id}')` to wait for opponent's move."
-                 content.append(msg)
-                 
-            else:
-                 # Opponent is Human (or another Agent via Tool, but assuming Human if showUi).
-                 msg += "\nWaiting for Human Opponent..."
-                 content.append(msg)
-                 
-                 if game.config.get("showUi"):
-                     # Return UI for Human to move
-                     is_white = (game.config.get("color", "white") == "white")
-                     html = render_board_to_html(game.board.fen(), game.id, is_white_perspective=is_white)
-                     
-                     resource = {
-                        "type": "resource",
-                        "resource": {
-                            "uri": f"ui://chess/{game.id}",
-                            "mimeType": "text/html",
-                            "text": html
-                        }
-                    }
-                     content.append(resource)
+            content.append(types.TextContent(type="text", text=md))
+            if game.config.get("showUi"):
+                # Return UI for Human to move
+                is_white = (game.config.get("color", "white") == "white")
+                html = render_board_to_html(game.board.fen(), game.id, is_white_perspective=is_white)
+                
+                resource = types.EmbeddedResource(
+                   type="resource",
+                   resource=types.TextResourceContents(
+                       uri=f"ui://chess/{game.id}",
+                       mimeType="text/html",
+                       text=html
+                   )
+               )
+                content.append(resource)
 
         return content
 
     except ValueError as e:
-        return [f"Error: {str(e)}\nAdvice: Please review the error, check the board state in the previous turn, and try a different move."]
+        return [types.TextContent(type="text", text=f"Error: {str(e)}\nAdvice: Please review the error, check the board state in the previous turn, and try a different move.")]
     except Exception as e:
-        return [f"System Error: {str(e)}"]
+        return [types.TextContent(type="text", text=f"System Error: {str(e)}")]
 
 # --- Entry Point ---
 
@@ -311,7 +297,7 @@ def joinGame(
         
     msg += "\n\n**Next Action**: Check if it is your turn. If yes, decide move and call `finishTurn`. If no, call `waitForNextTurn`."
     
-    content.append(msg)
+    content.append(types.TextContent(type="text", text=msg))
     return content
 
 # --- Entry Point ---
@@ -336,7 +322,7 @@ def main():
     except:
         pass
         
-    print(f"Chess MCP Server Running. Dashboard at http://localhost:{DASHBOARD_PORT}")
+    print(f"Chess MCP Server Running. Dashboard at http://localhost:{DASHBOARD_PORT}", file=sys.stderr)
     
     # Run MCP
     mcp.run(transport="stdio")
