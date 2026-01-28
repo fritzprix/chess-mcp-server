@@ -12,8 +12,16 @@ manager = GameManager()
 
 import os
 import re
+import importlib.metadata
 
 def get_version():
+    # First try to get the version from the installed package
+    try:
+        return importlib.metadata.version("chess-mcp-server")
+    except importlib.metadata.PackageNotFoundError:
+        pass
+
+    # Fallback to reading pyproject.toml for local development
     try:
         # Assuming pyproject.toml is in the root, one level up from src
         current_dir = os.path.dirname(os.path.abspath(__file__))
