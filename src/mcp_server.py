@@ -35,7 +35,7 @@ DASHBOARD_PORT = 8080
 @mcp.tool()
 def createGame(
     type: Literal["computer", "agent", "human"] = Field(..., description="Opponent type. 'computer': Play against AI (No UI). 'agent': Play against another Agent (No UI). 'human': Play against Human (Returns UI)."),
-    color: Literal["white", "black"] = Field("white", description="Your color. 'white' moves first. If 'black', computer will move first."),
+    color: Literal["white", "black"] = Field("white", description="Your color. 'white' moves first. If 'black', the opponent will move first."),
     difficulty: int = Field(5, ge=1, le=10, description="AI Difficulty Level (1-10), if type is 'computer'.")
 ) -> list:
     """
