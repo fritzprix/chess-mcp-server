@@ -18,7 +18,7 @@ class TestChessServer(unittest.TestCase):
         self.assertEqual(game.config["difficulty"], 1)
 
     def test_make_move_logic(self):
-        config = {"type": "agent", "showUi": False}
+        config = {"type": "agent"}
         game = self.manager.create_game(config)
         
         # White moves e4
@@ -51,9 +51,13 @@ class TestChessServer(unittest.TestCase):
     
     def test_rendering_content(self):
         from src.rendering import render_board_to_markdown
-        md = render_board_to_markdown(chess.Board().fen())
+        md = render_board_to_markdown(chess.Board().fen(), player_color="White")
         self.assertIn("**Turn**: White to move", md)
         self.assertIn("**FEN**:", md)
+        self.assertIn("**You are playing**: White", md)
+        self.assertIn("Legend", md)
+        # Check for algebraic notation (Pawn 'P')
+        self.assertIn(" P ", md)
 
     def test_actionable_error_format(self):
         config = {"type": "agent"}

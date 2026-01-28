@@ -3,8 +3,8 @@ from fastapi.responses import HTMLResponse
 import uvicorn
 import asyncio
 from typing import List
-from .game_state import GameManager
-from .rendering import render_board_to_html
+from src.game_state import GameManager
+from src.rendering import render_board_to_html
 
 app = FastAPI(title="Chess MCP Dashboard")
 manager = GameManager()
