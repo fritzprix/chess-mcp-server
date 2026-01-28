@@ -226,11 +226,13 @@
             // Post Message to MCP Host
             window.parent.postMessage({
                 type: 'tool',
-                action: 'finishTurn',
                 payload: {
-                    game_id: gameId,
-                    move: move,
-                    claim_win: claimWin
+                    toolName: 'finishTurn',
+                    params: {
+                        game_id: gameId,
+                        move: move,
+                        claim_win: claimWin
+                    }
                 }
             }, '*');
 
