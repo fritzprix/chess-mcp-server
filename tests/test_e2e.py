@@ -67,7 +67,7 @@ async def test_agent_vs_computer():
             content_text = result.content[0].text
             print(f"Server Response:\n{content_text}")
             
-            assert "opponent to move" in content_text or "computer's move" in content_text, "Expected waiting for move message"
+            assert "Opponent is thinking" in content_text or "waitForNextTurn" in content_text, "Expected waiting for move message"
 
             # --- Step 3: Wait for Computer Move ---
             print("\n[Step 3] Waiting for Computer Turn...")
