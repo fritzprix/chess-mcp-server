@@ -141,7 +141,7 @@ async def waitForNextTurn(
     """
     game = manager.get_game(game_id)
     if not game:
-        return ["Error: Game not found"]
+        raise ValueError(f"Game '{game_id}' not found.")
 
     try:
         # Check if game over immediately
@@ -281,9 +281,9 @@ async def finishTurn(
         return content
 
     except ValueError as e:
-        return [types.TextContent(type="text", text=f"Error: {str(e)}\nAdvice: Please review the error, check the board state in the previous turn, and try a different move.")]
+        raise ValueError(f"Invalid move '{move}': {str(e)}\nAdvice: Please review the error, check the board state, and try a valid move in UCI format (e.g., 'e2e4').")
     except Exception as e:
-        return [types.TextContent(type="text", text=f"System Error: {str(e)}")]
+        raise RuntimeError(f"Error submitting move '{move}': {str(e)}")
 
 # --- Entry Point ---
 
@@ -297,7 +297,7 @@ def joinGame(
     """
     game = manager.get_game(game_id)
     if not game:
-        return ["Error: Game not found"]
+        raise ValueError(f"Game '{game_id}' not found.")
     
     content = []
     msg = f"Joined Game {game.id} Successfully.\n"

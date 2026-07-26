@@ -49,6 +49,15 @@ async def test_agent_vs_computer():
             game_id = match.group(1)
             print(f"Game ID found: {game_id}")
 
+            # --- Step 1.5: Test Invalid Move returns isError == True ---
+            print("\n[Step 1.5] Testing Invalid Move 'e2e5'...")
+            invalid_res = await session.call_tool(
+                "finishTurn",
+                arguments={"game_id": game_id, "move": "e2e5"}
+            )
+            assert invalid_res.isError is True, "Expected isError=True on illegal move"
+            print("Invalid move correctly returned isError=True!")
+
             # --- Step 2: Make Move (e2e4) ---
             print("\n[Step 2] Making Move 'e2e4'...")
             result = await session.call_tool(
@@ -74,8 +83,5 @@ async def test_agent_vs_computer():
                 
             # Verify board state
             assert "**FEN**" in content_text, "Did not receive board state"
-            
-            # Additional check: Parsing FEN to see if black moved?
-            # Basic check is fine for now.
 
     print("\nE2E Test COMPLETED SUCCESSFULLY.")
