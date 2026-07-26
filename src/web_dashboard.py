@@ -58,6 +58,10 @@ async def index():
     
     return html
 
+@app.get("/api/dashboard/games")
+async def get_dashboard_games():
+    return manager.list_games()
+
 @app.get("/game/{game_id}", response_class=HTMLResponse)
 async def view_game(game_id: str):
     game = manager.get_game(game_id)

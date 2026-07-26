@@ -272,7 +272,7 @@
     </div>
 
     <script>
-        let allGames = [];
+        let allGames = {{ games | tojson }};
         let currentFilter = 'all';
 
         function copyJoin(gameId) {
@@ -324,6 +324,18 @@
             }).join('');
         }
 
+        function fetchGames() {
+            fetch('/api/dashboard/games')
+                .then(res => res.json())
+                .then(data => {
+                    if (Array.isArray(data)) {
+                        allGames = data;
+                        renderTable();
+                    }
+                })
+                .catch(err => console.error("Error fetching games:", err));
+        }
+
         function initDashboardSSE() {
             const eventSource = new EventSource('/api/dashboard/events');
             eventSource.onmessage = (e) => {
@@ -340,6 +352,8 @@
         }
 
         window.addEventListener('DOMContentLoaded', () => {
+            renderTable();
+            fetchGames();
             initDashboardSSE();
         });
     </script>
