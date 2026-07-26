@@ -12,18 +12,22 @@ sys.path.append(project_root)
 
 
 @pytest.mark.asyncio
-async def test_stdio_is_not_polluted_by_browser_output(tmp_path):
-    """Dashboard startup must never write non-JSON data to MCP stdout."""
+async def test_stdio_safe_browser_open_keeps_mcp_alive(tmp_path):
+    """Browser must open, but its stdout must not corrupt MCP stdio."""
+    stamp = tmp_path / "opened"
     fake_browser = tmp_path / "fake-browser"
     fake_browser.write_text(
         "#!/bin/sh\n"
-        "echo 'browser output that would corrupt MCP stdio'\n",
+        f"echo 'browser output that would corrupt MCP stdio'\n"
+        f"echo opened > '{stamp}'\n",
         encoding="utf-8",
     )
     fake_browser.chmod(0o755)
 
     env = os.environ.copy()
     env["BROWSER"] = str(fake_browser)
+    # Avoid xdg-open taking precedence over BROWSER in some environments.
+    env["PATH"] = str(tmp_path) + os.pathsep + env.get("PATH", "")
     server_params = StdioServerParameters(
         command=sys.executable,
         args=["-m", "src.mcp_server"],
@@ -33,10 +37,10 @@ async def test_stdio_is_not_polluted_by_browser_output(tmp_path):
     async with stdio_client(server_params) as (read, write):
         async with ClientSession(read, write) as session:
             await asyncio.wait_for(session.initialize(), timeout=3.0)
-            # Give the dashboard enough time to bind and run its notifier.
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(1.5)
             tools = await asyncio.wait_for(session.list_tools(), timeout=3.0)
             assert len(tools.tools) == 4
+            assert stamp.exists(), "expected stdio-safe browser opener to be invoked"
 
 
 @pytest.mark.asyncio

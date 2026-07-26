@@ -293,6 +293,58 @@ def joinGame(
 
 # --- Entry Point ---
 
+def open_browser_stdio_safe(url: str) -> None:
+    """
+    Open a URL in the user's browser without inheriting MCP stdio pipes.
+
+    On Linux, Chrome prints status text like
+    "기존 브라우저 세션에서 여는 중입니다." to the inherited stdout fd.
+    That corrupts the MCP JSON-RPC stream when transport=stdio.
+    Always spawn with stdout/stderr redirected to DEVNULL.
+    """
+    import shutil
+    import subprocess
+
+    candidates: list[list[str]] = []
+    browser_env = os.environ.get("BROWSER")
+    if browser_env:
+        # BROWSER may be "firefox %s" or a bare path.
+        if "%s" in browser_env:
+            candidates.append(browser_env.replace("%s", url).split())
+        else:
+            candidates.append([browser_env, url])
+
+    for opener in ("xdg-open", "gio", "gnome-open", "open"):
+        path = shutil.which(opener)
+        if not path:
+            continue
+        if opener == "gio":
+            candidates.append([path, "open", url])
+        else:
+            candidates.append([path, url])
+
+    for cmd in candidates:
+        try:
+            subprocess.Popen(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+                close_fds=True,
+            )
+            return
+        except OSError:
+            continue
+
+    # Last resort: webbrowser may still inherit fds on some platforms.
+    # Prefer failing silently over corrupting stdio.
+    print(
+        f"Dashboard ready but could not auto-open browser. Open manually: {url}",
+        file=sys.stderr,
+    )
+
+
 def launch_dashboard_thread():
     """
     Run the HTTP dashboard in a supervised loop on a background thread.
@@ -327,10 +379,15 @@ def launch_dashboard_thread():
 
 
 def _announce_dashboard_when_ready(wait_fn, get_port_fn, get_error_fn):
-    """Log dashboard URL to stderr without touching MCP stdout."""
+    """Announce dashboard URL on stderr and open browser without touching stdout."""
     if wait_fn(timeout=15.0):
         url = f"http://127.0.0.1:{get_port_fn()}"
         print(f"Chess MCP Dashboard ready at {url}", file=sys.stderr)
+        threading.Thread(
+            target=open_browser_stdio_safe,
+            args=(url,),
+            daemon=True,
+        ).start()
     else:
         print(
             f"Chess MCP Server running, but dashboard failed to start on port "
@@ -344,7 +401,7 @@ def main():
     Main entry point for the Chess MCP Server.
 
     Critical: mcp.run(stdio) must start immediately. Any blocking work before
-    it (dashboard wait, port probe, webbrowser, etc.) causes clients to see
+    it (dashboard wait, port probe, etc.) causes clients to see
     "connection closed: initialize response".
     """
     t = threading.Thread(target=launch_dashboard_thread, daemon=True)
