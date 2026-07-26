@@ -309,12 +309,16 @@
 
             tbody.innerHTML = filtered.map(g => {
                 let badgeClass = 'badge-agent';
-                if (g.type === 'computer') badgeClass = 'badge-computer';
+                let typeLabel = g.type;
+                if (g.type === 'computer') {
+                    badgeClass = 'badge-computer';
+                    typeLabel = `computer (Lvl ${g.difficulty || 5})`;
+                }
                 if (g.type === 'human') badgeClass = 'badge-human';
 
                 return `<tr>
                     <td><a class="game-id-link" href="/game/${g.id}">${g.id}</a></td>
-                    <td><span class="badge ${badgeClass}">${g.type}</span></td>
+                    <td><span class="badge ${badgeClass}">${typeLabel}</span></td>
                     <td><strong>${g.turn}</strong></td>
                     <td>${g.move_count || 0}</td>
                     <td><div class="fen-text" title="${g.fen}">${g.fen}</div></td>

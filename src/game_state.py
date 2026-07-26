@@ -221,6 +221,7 @@ class GameManager:
                     "id": g.id, 
                     "fen": g.board.fen(), 
                     "type": g.config.get("type"),
+                    "difficulty": g.config.get("difficulty", 5),
                     "turn": "White" if g.board.turn == chess.WHITE else "Black",
                     "move_count": len(g.move_history),
                     "is_game_over": g.is_game_over,

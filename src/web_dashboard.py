@@ -68,7 +68,9 @@ async def view_game(game_id: str):
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")
         
-    html = render_board_to_html(game.board.fen(), game.id, is_white_perspective=True)
+    difficulty = game.config.get("difficulty", 5)
+    game_type = game.config.get("type", "computer")
+    html = render_board_to_html(game.board.fen(), game.id, is_white_perspective=True, difficulty=difficulty, game_type=game_type)
     return html
 
 @app.get("/api/game/{game_id}/state")

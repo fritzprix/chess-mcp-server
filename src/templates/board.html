@@ -525,6 +525,11 @@
         <section class="board-card">
             <div class="game-info-strip">
                 <div>Game ID: <strong id="lblGameId">{{ game_id }}</strong></div>
+                <div>Opponent: <span id="lblOpponent" class="turn-badge turn-white" style="background:#2e3245; color:#2ecc71;">
+                    {% if game_type == 'computer' %}🤖 Computer (Level {{ difficulty }})
+                    {% elif game_type == 'agent' %}🤖 AI Agent
+                    {% else %}👤 Human{% endif %}
+                </span></div>
                 <div>You: <strong>{{ user_side }}</strong></div>
                 <div>Turn: <span id="lblTurn" class="turn-badge turn-white">{{ display_turn }}</span></div>
             </div>
@@ -941,6 +946,16 @@
             currentGameState = newState;
             document.getElementById('lblTurn').innerText = newState.turn;
             document.getElementById('lblTurn').className = 'turn-badge ' + (newState.turn === 'White' ? 'turn-white' : 'turn-black');
+
+            const cfg = newState.config || {};
+            const gType = cfg.type || 'computer';
+            const diff = cfg.difficulty || 5;
+            const oppEl = document.getElementById('lblOpponent');
+            if (oppEl) {
+                if (gType === 'computer') oppEl.innerText = `🤖 Computer (Level ${diff})`;
+                else if (gType === 'agent') oppEl.innerText = `🤖 AI Agent`;
+                else oppEl.innerText = `👤 Human`;
+            }
 
             if (newState.is_game_over) {
                 document.getElementById('statusMsg').innerText = "🏆 Game Over: " + newState.result;
