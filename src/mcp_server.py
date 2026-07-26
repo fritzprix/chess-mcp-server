@@ -295,43 +295,55 @@ def joinGame(
 
 def launch_dashboard_thread():
     """
-    Wrapper to start the dashboard in a separate thread.
+    Start the HTTP dashboard. Must never run on the MCP stdio main thread —
+    blocking before mcp.run() starves the initialize handshake.
     """
+    from src.web_dashboard import (
+        get_active_port,
+        get_dashboard_error,
+        wait_for_dashboard,
+    )
+
+    ready_notifier = threading.Thread(
+        target=_announce_dashboard_when_ready,
+        args=(wait_for_dashboard, get_active_port, get_dashboard_error),
+        daemon=True,
+    )
+    ready_notifier.start()
+
     try:
         start_dashboard(port=DASHBOARD_PORT)
     except Exception as e:
         print(f"Dashboard server thread exception: {e}", file=sys.stderr)
 
 
-def main():
-    """
-    Main entry point for the Chess MCP Server.
-    """
-    from src.web_dashboard import (
-        get_active_port,
-        wait_for_dashboard,
-        get_dashboard_error,
-    )
-
-    t = threading.Thread(target=launch_dashboard_thread, daemon=True)
-    t.start()
-
-    if wait_for_dashboard(timeout=5.0):
-        port = get_active_port()
-        url = f"http://localhost:{port}"
+def _announce_dashboard_when_ready(wait_fn, get_port_fn, get_error_fn):
+    """Log dashboard URL after bind — never blocks MCP stdio."""
+    if wait_fn(timeout=15.0):
+        url = f"http://localhost:{get_port_fn()}"
         try:
             webbrowser.open(url)
         except Exception:
             pass
         print(f"Chess MCP Server Running. Dashboard at {url}", file=sys.stderr)
     else:
-        err = get_dashboard_error()
         print(
             f"Chess MCP Server Running, but dashboard failed to start on port "
-            f"{DASHBOARD_PORT}+: {err}",
+            f"{DASHBOARD_PORT}+: {get_error_fn()}",
             file=sys.stderr,
         )
 
+
+def main():
+    """
+    Main entry point for the Chess MCP Server.
+
+    Critical: mcp.run(stdio) must start immediately. Any blocking work before
+    it (dashboard wait, port probe, etc.) causes clients to see
+    "connection closed: initialize response".
+    """
+    t = threading.Thread(target=launch_dashboard_thread, daemon=True)
+    t.start()
     mcp.run(transport="stdio")
 
 
