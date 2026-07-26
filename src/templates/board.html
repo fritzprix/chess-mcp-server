@@ -1090,47 +1090,75 @@
         }
 
         // Replay Video Generator (MediaRecorder using offscreen Canvas)
+        function pickWebmMimeType() {
+            const candidates = [
+                'video/webm;codecs=vp9',
+                'video/webm;codecs=vp8',
+                'video/webm'
+            ];
+            for (const t of candidates) {
+                if (window.MediaRecorder && MediaRecorder.isTypeSupported(t)) return t;
+            }
+            return '';
+        }
+
         async function downloadReplayVideo() {
             if (!currentHistory || currentHistory.length === 0) {
                 alert("No moves recorded in this game yet!");
                 return;
             }
+            if (!window.MediaRecorder || !HTMLCanvasElement.prototype.captureStream) {
+                alert("WebM recording is not supported in this browser. Use GIF download instead.");
+                return;
+            }
+
+            const mimeType = pickWebmMimeType();
+            if (!mimeType) {
+                alert("MediaRecorder webm format not supported on this browser. Use GIF download instead.");
+                return;
+            }
 
             const delayMs = parseInt(document.getElementById('selReplaySpeed').value) || 5000;
             const totalDurationSec = Math.round(((currentHistory.length + 1) * delayMs) / 1000);
-            document.getElementById('statusMsg').innerText = `🎬 Recording ${totalDurationSec}s Replay Video (${delayMs/1000}s/move)... Please wait.`;
+            document.getElementById('statusMsg').innerText =
+                `🎬 Recording ${totalDurationSec}s Replay Video (${delayMs / 1000}s/move)... Please wait.`;
 
             const canvas = document.createElement('canvas');
             const width = 640;
             const height = 710;
             canvas.width = width;
             canvas.height = height;
-            const ctx = canvas.getContext('2d');
+            // Keep canvas in DOM (hidden) — some browsers skip captureStream for detached canvases.
+            canvas.style.cssText = 'position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0;pointer-events:none;';
+            document.body.appendChild(canvas);
+            const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
-            const stream = canvas.captureStream(30);
+            // fps=0 → push frames explicitly via requestFrame after each draw.
+            const stream = canvas.captureStream(0);
+            const track = stream.getVideoTracks()[0];
+
             let mediaRecorder;
             try {
-                mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+                mediaRecorder = new MediaRecorder(stream, {
+                    mimeType,
+                    videoBitsPerSecond: 2_500_000
+                });
             } catch (e) {
+                canvas.remove();
                 alert("MediaRecorder webm format not supported on this browser.");
                 return;
             }
 
-            let chunks = [];
-            mediaRecorder.ondataavailable = e => chunks.push(e.data);
-            mediaRecorder.onstop = () => {
-                const blob = new Blob(chunks, { type: 'video/webm' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `chess_replay_${gameId}.webm`;
-                a.click();
-                document.getElementById('statusMsg').innerText = "✅ Replay video downloaded successfully!";
+            const chunks = [];
+            mediaRecorder.ondataavailable = (e) => {
+                if (e.data && e.data.size > 0) chunks.push(e.data);
             };
 
-            mediaRecorder.start();
+            const stopped = new Promise((resolve, reject) => {
+                mediaRecorder.onstop = () => resolve();
+                mediaRecorder.onerror = (ev) => reject(ev.error || new Error('MediaRecorder error'));
+            });
 
-            // Construct frames sequence: Initial board -> Move 1 (White) -> Move 1 (Black) -> Move 2 ...
             const frames = [
                 { fen: initialFen, moveInfo: null, title: "Start Position" },
                 ...currentHistory.map(h => ({
@@ -1140,13 +1168,60 @@
                 }))
             ];
 
-            for (let i = 0; i < frames.length; i++) {
-                const f = frames[i];
-                drawReplayFrameToCanvas(ctx, f.fen, width, height, f.moveInfo, f.title, i, frames.length);
-                await new Promise(r => setTimeout(r, delayMs));
+            function paintFrame(f, index) {
+                drawReplayFrameToCanvas(ctx, f.fen, width, height, f.moveInfo, f.title, index, frames.length);
+                // Force a captured frame for captureStream(0) / static canvases.
+                if (track && typeof track.requestFrame === 'function') {
+                    track.requestFrame();
+                }
             }
 
-            mediaRecorder.stop();
+            async function holdFrame(f, index, ms) {
+                const frameInterval = 1000 / 30;
+                const end = performance.now() + ms;
+                // Redraw periodically so the encoder receives real timed samples.
+                while (performance.now() < end) {
+                    paintFrame(f, index);
+                    await new Promise(r => setTimeout(r, frameInterval));
+                }
+            }
+
+            try {
+                // Paint once before start so the first keyframe is not empty/black.
+                paintFrame(frames[0], 0);
+                mediaRecorder.start(200);
+
+                for (let i = 0; i < frames.length; i++) {
+                    await holdFrame(frames[i], i, delayMs);
+                }
+
+                // Flush remaining data then stop.
+                if (mediaRecorder.state === 'recording') {
+                    mediaRecorder.requestData();
+                    mediaRecorder.stop();
+                }
+                await stopped;
+
+                const blob = new Blob(chunks, { type: mimeType });
+                if (blob.size < 256) {
+                    throw new Error(`Recording produced an empty video (${blob.size} bytes).`);
+                }
+
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `chess_replay_${gameId}.webm`;
+                a.click();
+                setTimeout(() => URL.revokeObjectURL(url), 10_000);
+                document.getElementById('statusMsg').innerText = "✅ Replay video downloaded successfully!";
+            } catch (err) {
+                console.error('WebM recording failed:', err);
+                document.getElementById('statusMsg').innerText = "❌ WebM recording failed. Try GIF instead.";
+                alert("WebM recording failed: " + (err && err.message ? err.message : String(err)));
+            } finally {
+                stream.getTracks().forEach(t => t.stop());
+                canvas.remove();
+            }
         }
 
         // Animated GIF Generator
