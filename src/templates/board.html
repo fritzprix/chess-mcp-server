@@ -7,6 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/gifshot@0.3.2/build/gifshot.min.js"></script>
     <style>
         :root {
             --bg-color: #121318;
@@ -608,11 +609,20 @@
                     <span>Replay Export</span>
                 </div>
                 <div class="export-actions">
+                    <div style="display:flex; flex-direction:column; gap:4px; margin-bottom:4px;">
+                        <label style="font-size:0.85rem; color:var(--text-secondary); font-weight:500;">Move Frame Duration:</label>
+                        <select id="selReplaySpeed" style="padding:8px 12px; border-radius:8px; background:#121318; color:var(--text-primary); border:1px solid var(--panel-border); font-family:'Outfit', sans-serif;">
+                            <option value="5000" selected>5 seconds / move (Default)</option>
+                            <option value="3000">3 seconds / move</option>
+                            <option value="2000">2 seconds / move</option>
+                            <option value="1000">1 second / move</option>
+                        </select>
+                    </div>
                     <button class="btn btn-action" onclick="downloadReplayVideo()">
                         🎬 Download Replay Video (.webm)
                     </button>
                     <button class="btn btn-action" onclick="downloadReplayGif()" style="background: linear-gradient(135deg, #9b59b6, #8e44ad);">
-                        🖼️ Download Replay Frame GIF
+                        🖼️ Download Animated Replay GIF
                     </button>
                     <button class="btn btn-secondary" onclick="downloadPGN()">
                         📄 Download PGN File
@@ -971,6 +981,70 @@
             window.location.href = `/api/game/${gameId}/pgn`;
         }
 
+        // Draw Move Frame Header and Board to HTML5 Canvas for Export
+        function drawReplayFrameToCanvas(ctx, fenStr, width, height, moveInfo, bannerTitle, stepIndex, totalSteps) {
+            const headerHeight = 70;
+            const boardSize = width;
+
+            // Background Fill
+            ctx.fillStyle = "#121318";
+            ctx.fillRect(0, 0, width, height);
+
+            // Header Banner Fill
+            ctx.fillStyle = "#1e2029";
+            ctx.fillRect(0, 0, width, headerHeight);
+
+            // Banner Title
+            ctx.font = "bold 18px Outfit, sans-serif";
+            ctx.fillStyle = "#2ecc71";
+            ctx.textAlign = "left";
+            ctx.textBaseline = "middle";
+            ctx.fillText(bannerTitle, 16, headerHeight / 2);
+
+            // Step Counter
+            ctx.font = "600 13px 'JetBrains Mono', monospace";
+            ctx.fillStyle = "#9ea4b5";
+            ctx.textAlign = "right";
+            ctx.fillText(`Step ${stepIndex} / ${totalSteps - 1}`, width - 16, headerHeight / 2);
+
+            // Draw Board Grid
+            const sqSize = boardSize / 8;
+            const grid = parseFen(fenStr);
+            const lastFrom = moveInfo ? moveInfo.uci.substring(0, 2) : null;
+            const lastTo = moveInfo ? moveInfo.uci.substring(2, 4) : null;
+
+            for (let r = 0; r < 8; r++) {
+                for (let c = 0; c < 8; c++) {
+                    const fileChar = String.fromCharCode(97 + c);
+                    const rankNum = 8 - r;
+                    const sqCoord = fileChar + rankNum;
+
+                    const isLight = (r + c) % 2 === 0;
+                    ctx.fillStyle = isLight ? "#eeeed2" : "#769656";
+
+                    if (sqCoord === lastFrom || sqCoord === lastTo) {
+                        ctx.fillStyle = "rgba(52, 152, 219, 0.75)";
+                    }
+
+                    const x = c * sqSize;
+                    const y = headerHeight + (r * sqSize);
+                    ctx.fillRect(x, y, sqSize, sqSize);
+
+                    const p = grid[r][c];
+                    if (p) {
+                        ctx.font = `${sqSize * 0.72}px sans-serif`;
+                        ctx.textAlign = 'center';
+                        ctx.textBaseline = 'middle';
+                        ctx.fillStyle = p === p.toUpperCase() ? '#ffffff' : '#000000';
+                        ctx.shadowColor = 'rgba(0,0,0,0.6)';
+                        ctx.shadowBlur = 4;
+                        ctx.fillText(pieceMap[p] || p, x + (sqSize * 0.5), y + (sqSize * 0.55));
+                        ctx.shadowBlur = 0;
+                    }
+                }
+            }
+        }
+
         // Replay Video Generator (MediaRecorder using offscreen Canvas)
         async function downloadReplayVideo() {
             if (!currentHistory || currentHistory.length === 0) {
@@ -978,12 +1052,15 @@
                 return;
             }
 
-            document.getElementById('statusMsg').innerText = "🎬 Rendering Replay Video... Please wait.";
+            const delayMs = parseInt(document.getElementById('selReplaySpeed').value) || 5000;
+            const totalDurationSec = Math.round(((currentHistory.length + 1) * delayMs) / 1000);
+            document.getElementById('statusMsg').innerText = `🎬 Recording ${totalDurationSec}s Replay Video (${delayMs/1000}s/move)... Please wait.`;
 
             const canvas = document.createElement('canvas');
-            const size = 640;
-            canvas.width = size;
-            canvas.height = size;
+            const width = 640;
+            const height = 710;
+            canvas.width = width;
+            canvas.height = height;
             const ctx = canvas.getContext('2d');
 
             const stream = canvas.captureStream(30);
@@ -1009,88 +1086,88 @@
 
             mediaRecorder.start();
 
-            // Render each history frame onto canvas with smooth delay
-            const stepFens = [initialFen, ...currentHistory.map(h => h.fen)];
-            for (let i = 0; i < stepFens.length; i++) {
-                drawBoardToCanvas(ctx, stepFens[i], size, i > 0 ? currentHistory[i-1] : null);
-                await new Promise(r => setTimeout(r, 800)); // 0.8s per move frame
+            // Construct frames sequence: Initial board -> Move 1 (White) -> Move 1 (Black) -> Move 2 ...
+            const frames = [
+                { fen: initialFen, moveInfo: null, title: "Start Position" },
+                ...currentHistory.map(h => ({
+                    fen: h.fen,
+                    moveInfo: h,
+                    title: `Move ${h.move_number}: ${h.turn} played ${h.san}`
+                }))
+            ];
+
+            for (let i = 0; i < frames.length; i++) {
+                const f = frames[i];
+                drawReplayFrameToCanvas(ctx, f.fen, width, height, f.moveInfo, f.title, i, frames.length);
+                await new Promise(r => setTimeout(r, delayMs));
             }
 
-            // Hold last frame slightly longer
-            await new Promise(r => setTimeout(r, 1500));
             mediaRecorder.stop();
         }
 
-        // Draw Board to HTML5 Canvas for Export
-        function drawBoardToCanvas(ctx, fenStr, canvasSize, moveInfo) {
-            const sqSize = canvasSize / 8;
-            const grid = parseFen(fenStr);
-
-            ctx.fillStyle = "#121318";
-            ctx.fillRect(0, 0, canvasSize, canvasSize);
-
-            const lastFrom = moveInfo ? moveInfo.uci.substring(0,2) : null;
-            const lastTo = moveInfo ? moveInfo.uci.substring(2,4) : null;
-
-            for (let r = 0; r < 8; r++) {
-                for (let c = 0; c < 8; c++) {
-                    const fileChar = String.fromCharCode(97 + c);
-                    const rankNum = 8 - r;
-                    const sqCoord = fileChar + rankNum;
-
-                    const isLight = (r + c) % 2 === 0;
-                    ctx.fillStyle = isLight ? "#eeeed2" : "#769656";
-
-                    if (sqCoord === lastFrom || sqCoord === lastTo) {
-                        ctx.fillStyle = "rgba(52, 152, 219, 0.65)";
-                    }
-
-                    ctx.fillRect(c * sqSize, r * sqSize, sqSize, sqSize);
-
-                    // Draw piece Unicode
-                    const p = grid[r][c];
-                    if (p) {
-                        ctx.font = `${sqSize * 0.75}px sans-serif`;
-                        ctx.textAlign = 'center';
-                        ctx.textBaseline = 'middle';
-                        ctx.fillStyle = p === p.toUpperCase() ? '#ffffff' : '#000000';
-                        ctx.shadowColor = 'rgba(0,0,0,0.5)';
-                        ctx.shadowBlur = 4;
-                        ctx.fillText(pieceMap[p] || p, (c + 0.5) * sqSize, (r + 0.55) * sqSize);
-                        ctx.shadowBlur = 0;
-                    }
-                }
-            }
-        }
-
-        // Download Replay Frame GIF
+        // Animated GIF Generator
         async function downloadReplayGif() {
             if (!currentHistory || currentHistory.length === 0) {
                 alert("No moves recorded in this game yet!");
                 return;
             }
 
-            document.getElementById('statusMsg').innerText = "🖼️ Generating Replay GIF... Please wait.";
+            const delayMs = parseInt(document.getElementById('selReplaySpeed').value) || 5000;
+            const delaySec = delayMs / 1000;
+            document.getElementById('statusMsg').innerText = `🖼️ Generating Animated GIF (${delaySec}s per move)... Please wait.`;
 
             const canvas = document.createElement('canvas');
-            canvas.width = 480;
-            canvas.height = 480;
+            const width = 480;
+            const height = 550;
+            canvas.width = width;
+            canvas.height = height;
             const ctx = canvas.getContext('2d');
 
-            const stepFens = [initialFen, ...currentHistory.map(h => h.fen)];
-            
-            // Generate PNG frame download or fallback image series
-            let i = stepFens.length - 1;
-            drawBoardToCanvas(ctx, stepFens[i], 480, currentHistory[i-1]);
+            const frames = [
+                { fen: initialFen, moveInfo: null, title: "Start Position" },
+                ...currentHistory.map(h => ({
+                    fen: h.fen,
+                    moveInfo: h,
+                    title: `Move ${h.move_number}: ${h.turn} played ${h.san}`
+                }))
+            ];
 
-            canvas.toBlob(blob => {
-                const url = URL.createObjectURL(blob);
+            const frameImages = [];
+            for (let i = 0; i < frames.length; i++) {
+                const f = frames[i];
+                drawReplayFrameToCanvas(ctx, f.fen, width, height, f.moveInfo, f.title, i, frames.length);
+                frameImages.push(canvas.toDataURL('image/png'));
+            }
+
+            if (typeof gifshot !== 'undefined') {
+                gifshot.createGIF({
+                    images: frameImages,
+                    interval: delaySec,
+                    gifWidth: width,
+                    gifHeight: height,
+                    numFrames: frameImages.length
+                }, function (obj) {
+                    if (!obj.error) {
+                        const a = document.createElement('a');
+                        a.href = obj.image;
+                        a.download = `chess_replay_${gameId}.gif`;
+                        a.click();
+                        document.getElementById('statusMsg').innerText = "✅ Animated GIF downloaded successfully!";
+                    } else {
+                        fallbackPngDownload();
+                    }
+                });
+            } else {
+                fallbackPngDownload();
+            }
+
+            function fallbackPngDownload() {
                 const a = document.createElement('a');
-                a.href = url;
+                a.href = frameImages[frameImages.length - 1];
                 a.download = `chess_game_${gameId}_snapshot.png`;
                 a.click();
                 document.getElementById('statusMsg').innerText = "✅ Game snapshot image downloaded!";
-            }, 'image/png');
+            }
         }
 
         // Initialize Page
