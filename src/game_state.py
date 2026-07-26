@@ -104,6 +104,7 @@ class GameInstance:
 
 class GameManager:
     _instance = None
+    _save_file = os.path.join(os.path.expanduser("~"), ".chess_mcp_games.json")
     
     def __new__(cls):
         if cls._instance is None:
@@ -111,7 +112,44 @@ class GameManager:
             cls._instance.games: Dict[str, GameInstance] = {}
             cls._instance._lock = threading.RLock()
             cls._instance.dashboard_listeners: List[asyncio.Queue] = []
+            cls._instance._load_from_disk()
         return cls._instance
+
+    def _save_to_disk(self):
+        try:
+            data = {}
+            for g_id, g in self.games.items():
+                data[g_id] = {
+                    "id": g.id,
+                    "fen": g.board.fen(),
+                    "config": g.config,
+                    "move_history": g.move_history
+                }
+            with open(self._save_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    def _load_from_disk(self):
+        if not os.path.exists(self._save_file):
+            return
+        try:
+            with open(self._save_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            for g_id, item in data.items():
+                if g_id not in self.games:
+                    board = chess.Board(item["fen"])
+                    ai = ChessAI() if item.get("config", {}).get("type") == "computer" else None
+                    game = GameInstance(
+                        id=g_id,
+                        board=board,
+                        config=item.get("config", {}),
+                        ai=ai,
+                        move_history=item.get("move_history", [])
+                    )
+                    self.games[g_id] = game
+        except Exception:
+            pass
 
     def create_game(self, config: dict) -> GameInstance:
         with self._lock:
@@ -129,15 +167,18 @@ class GameManager:
                 ai=ai
             )
             self.games[game_id] = game
+            self._save_to_disk()
             self._notify_dashboard("game_created", game_id)
             return game
 
     def get_game(self, game_id: str) -> Optional[GameInstance]:
         with self._lock:
+            self._load_from_disk()
             return self.games.get(game_id)
         
     def list_games(self):
         with self._lock:
+            self._load_from_disk()
             return [
                 {
                     "id": g.id, 
@@ -221,6 +262,7 @@ class GameManager:
         game.move_event.set()
         game.move_event.clear() # Reset for next turn
         game.notify_listeners(event_type="move")
+        self._save_to_disk()
         self._notify_dashboard("game_updated", game_id)
         
         # If vs Computer and it's Computer's turn now (and game not over)
@@ -260,6 +302,7 @@ class GameManager:
             game.move_event.set()
             game.move_event.clear()
             game.notify_listeners(event_type="move")
+            self._save_to_disk()
             self._notify_dashboard("game_updated", game.id)
 
             
