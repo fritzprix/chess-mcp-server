@@ -191,10 +191,17 @@ async def get_game_pgn(game_id: str):
 ACTIVE_PORT = 8080
 _dashboard_ready = threading.Event()
 _dashboard_error: Optional[BaseException] = None
+_PORT_FILE = os.path.join(
+    __import__("tempfile").gettempdir(), "chess_mcp_dashboard.port"
+)
 
 
 def get_active_port() -> int:
     return ACTIVE_PORT
+
+
+def get_dashboard_url() -> str:
+    return f"http://127.0.0.1:{ACTIVE_PORT}"
 
 
 def wait_for_dashboard(timeout: float = 5.0) -> bool:
@@ -213,7 +220,6 @@ def _port_is_free(port: int) -> bool:
         with socket.create_connection(("127.0.0.1", port), timeout=0.25):
             return False
     except OSError:
-        # Nothing listening (or filtered) — treat as available.
         return True
 
 
@@ -224,54 +230,83 @@ def find_available_port(start_port: int = 8080, max_attempts: int = 20) -> int:
     raise OSError(f"No free port in range {start_port}-{start_port + max_attempts - 1}")
 
 
+def _write_port_file(port: int) -> None:
+    try:
+        with open(_PORT_FILE, "w", encoding="utf-8") as f:
+            f.write(str(port))
+    except OSError as e:
+        print(f"Warning: could not write port file {_PORT_FILE}: {e}", file=sys.stderr)
+
+
 @app.on_event("startup")
 async def _on_dashboard_startup():
+    _write_port_file(ACTIVE_PORT)
     _dashboard_ready.set()
+    print(
+        f"Dashboard listening on http://127.0.0.1:{ACTIVE_PORT}",
+        file=sys.stderr,
+    )
 
 
 def start_dashboard(port: int = 8080):
     """
-    Bind the dashboard in this thread. Safe to call from a daemon thread
-    (signal handlers disabled). Tries port, port+1, ... on bind failure.
+    Bind the dashboard in this thread with its own asyncio event loop.
+    Must not share the MCP stdio event loop on the main thread.
+    Tries port, port+1, ... on bind failure.
     """
     global ACTIVE_PORT, _dashboard_error
     _dashboard_ready.clear()
     _dashboard_error = None
     last_err: Optional[BaseException] = None
 
-    for p in range(port, port + 20):
-        if not _port_is_free(p):
-            print(f"Dashboard: port {p} in use, trying next...", file=sys.stderr)
-            continue
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
 
-        ACTIVE_PORT = p
-        config = uvicorn.Config(
-            app,
-            host="0.0.0.0",
-            port=p,
-            log_level="error",
-            access_log=False,
-        )
-        server = uvicorn.Server(config)
-        # uvicorn signal handlers only work on the main thread
-        server.install_signal_handlers = lambda: None
+    try:
+        for p in range(port, port + 20):
+            if not _port_is_free(p):
+                print(f"Dashboard: port {p} in use, trying next...", file=sys.stderr)
+                continue
 
+            ACTIVE_PORT = p
+            config = uvicorn.Config(
+                app,
+                host="0.0.0.0",
+                port=p,
+                log_level="warning",
+                access_log=False,
+                loop="asyncio",
+            )
+            server = uvicorn.Server(config)
+            server.install_signal_handlers = lambda: None
+
+            print(f"Dashboard: binding 0.0.0.0:{p} ...", file=sys.stderr)
+            try:
+                loop.run_until_complete(server.serve())
+                print(f"Dashboard: server on port {p} stopped", file=sys.stderr)
+                _dashboard_ready.clear()
+                return
+            except SystemExit as e:
+                last_err = e
+                print(f"Dashboard: bind/exit on {p}: {e}", file=sys.stderr)
+                _dashboard_ready.clear()
+                continue
+            except OSError as e:
+                last_err = e
+                print(f"Dashboard: OSError on {p}: {e}", file=sys.stderr)
+                _dashboard_ready.clear()
+                continue
+            except Exception as e:
+                last_err = e
+                _dashboard_error = e
+                _dashboard_ready.clear()
+                print(f"Dashboard: exception on {p}: {e}", file=sys.stderr)
+                raise
+    finally:
         try:
-            server.run()
-            return
-        except SystemExit as e:
-            last_err = e
-            _dashboard_ready.clear()
-            continue
-        except OSError as e:
-            last_err = e
-            _dashboard_ready.clear()
-            continue
-        except Exception as e:
-            last_err = e
-            _dashboard_error = e
-            _dashboard_ready.clear()
-            raise
+            loop.close()
+        except Exception:
+            pass
 
     _dashboard_error = last_err or RuntimeError(f"No free port near {port}")
     raise RuntimeError(

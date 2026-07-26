@@ -21,7 +21,7 @@ if project_root not in sys.path:
 # Absolute imports
 from src.game_state import GameManager
 from src.rendering import render_board_to_markdown, render_board_to_html
-from src.web_dashboard import start_dashboard
+from src.web_dashboard import start_dashboard, get_active_port, get_dashboard_url
 
 
 # Initialize FastMCP
@@ -80,6 +80,7 @@ def createGame(
         f"- Type: {type}\n"
         f"- You are: {color.title()}\n"
         f"- Difficulty: Level {difficulty} (if computer)\n"
+        f"- Dashboard: {get_dashboard_url()}\n"
     )
 
     if color == "white":
@@ -295,14 +296,17 @@ def joinGame(
 
 def launch_dashboard_thread():
     """
-    Start the HTTP dashboard. Must never run on the MCP stdio main thread —
-    blocking before mcp.run() starves the initialize handshake.
+    Run the HTTP dashboard in a supervised loop on a background thread.
+
+    Must never block the MCP stdio main thread — any wait before mcp.run()
+    starves the initialize handshake ("connection closed: initialize response").
     """
     from src.web_dashboard import (
         get_active_port,
         get_dashboard_error,
         wait_for_dashboard,
     )
+    import time
 
     ready_notifier = threading.Thread(
         target=_announce_dashboard_when_ready,
@@ -311,24 +315,34 @@ def launch_dashboard_thread():
     )
     ready_notifier.start()
 
-    try:
-        start_dashboard(port=DASHBOARD_PORT)
-    except Exception as e:
-        print(f"Dashboard server thread exception: {e}", file=sys.stderr)
+    while True:
+        try:
+            start_dashboard(port=DASHBOARD_PORT)
+            print(
+                "Dashboard stopped unexpectedly; restarting in 1s...",
+                file=sys.stderr,
+            )
+        except Exception as e:
+            print(f"Dashboard server thread exception: {e}", file=sys.stderr)
+        time.sleep(1.0)
 
 
 def _announce_dashboard_when_ready(wait_fn, get_port_fn, get_error_fn):
     """Log dashboard URL after bind — never blocks MCP stdio."""
     if wait_fn(timeout=15.0):
-        url = f"http://localhost:{get_port_fn()}"
+        url = f"http://127.0.0.1:{get_port_fn()}"
+        print(f"Chess MCP Dashboard ready at {url}", file=sys.stderr)
         try:
-            webbrowser.open(url)
+            # Never block the notifier on GUI/browser failures
+            threading.Thread(
+                target=lambda: webbrowser.open(url),
+                daemon=True,
+            ).start()
         except Exception:
             pass
-        print(f"Chess MCP Server Running. Dashboard at {url}", file=sys.stderr)
     else:
         print(
-            f"Chess MCP Server Running, but dashboard failed to start on port "
+            f"Chess MCP Server running, but dashboard failed to start on port "
             f"{DASHBOARD_PORT}+: {get_error_fn()}",
             file=sys.stderr,
         )
@@ -339,7 +353,7 @@ def main():
     Main entry point for the Chess MCP Server.
 
     Critical: mcp.run(stdio) must start immediately. Any blocking work before
-    it (dashboard wait, port probe, etc.) causes clients to see
+    it (dashboard wait, port probe, webbrowser, etc.) causes clients to see
     "connection closed: initialize response".
     """
     t = threading.Thread(target=launch_dashboard_thread, daemon=True)
