@@ -10,6 +10,35 @@ from mcp.client.stdio import stdio_client
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(project_root)
 
+
+@pytest.mark.asyncio
+async def test_stdio_is_not_polluted_by_browser_output(tmp_path):
+    """Dashboard startup must never write non-JSON data to MCP stdout."""
+    fake_browser = tmp_path / "fake-browser"
+    fake_browser.write_text(
+        "#!/bin/sh\n"
+        "echo 'browser output that would corrupt MCP stdio'\n",
+        encoding="utf-8",
+    )
+    fake_browser.chmod(0o755)
+
+    env = os.environ.copy()
+    env["BROWSER"] = str(fake_browser)
+    server_params = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "src.mcp_server"],
+        env=env,
+    )
+
+    async with stdio_client(server_params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await asyncio.wait_for(session.initialize(), timeout=3.0)
+            # Give the dashboard enough time to bind and run its notifier.
+            await asyncio.sleep(1.0)
+            tools = await asyncio.wait_for(session.list_tools(), timeout=3.0)
+            assert len(tools.tools) == 4
+
+
 @pytest.mark.asyncio
 async def test_agent_vs_computer():
     print("Starting E2E Test: Agent vs Computer...")

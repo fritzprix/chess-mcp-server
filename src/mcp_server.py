@@ -1,6 +1,5 @@
 import asyncio
 import threading
-import webbrowser
 import chess
 from typing import Literal
 from mcp.server.fastmcp import FastMCP
@@ -328,18 +327,10 @@ def launch_dashboard_thread():
 
 
 def _announce_dashboard_when_ready(wait_fn, get_port_fn, get_error_fn):
-    """Log dashboard URL after bind — never blocks MCP stdio."""
+    """Log dashboard URL to stderr without touching MCP stdout."""
     if wait_fn(timeout=15.0):
         url = f"http://127.0.0.1:{get_port_fn()}"
         print(f"Chess MCP Dashboard ready at {url}", file=sys.stderr)
-        try:
-            # Never block the notifier on GUI/browser failures
-            threading.Thread(
-                target=lambda: webbrowser.open(url),
-                daemon=True,
-            ).start()
-        except Exception:
-            pass
     else:
         print(
             f"Chess MCP Server running, but dashboard failed to start on port "
