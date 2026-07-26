@@ -6,8 +6,10 @@ import asyncio
 import os
 import re
 import json
+import sys
 import importlib.metadata
 import chess.pgn
+import threading
 from typing import List, Optional
 from src.game_state import GameManager
 from src.rendering import render_board_to_html
@@ -187,24 +189,92 @@ async def get_game_pgn(game_id: str):
     })
 
 ACTIVE_PORT = 8080
+_dashboard_ready = threading.Event()
+_dashboard_error: Optional[BaseException] = None
 
-def get_active_port():
+
+def get_active_port() -> int:
     return ACTIVE_PORT
 
-def find_available_port(start_port=8080, max_attempts=20):
-    import socket
-    for p in range(start_port, start_port + max_attempts):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            try:
-                sock.bind(("0.0.0.0", p))
-                return p
-            except OSError:
-                continue
-    return start_port
 
-def start_dashboard(port=8080):
-    global ACTIVE_PORT
-    ACTIVE_PORT = find_available_port(port)
-    uvicorn.run(app, host="0.0.0.0", port=ACTIVE_PORT, log_level="error")
+def wait_for_dashboard(timeout: float = 5.0) -> bool:
+    """Block until the dashboard has bound and completed startup."""
+    return _dashboard_ready.wait(timeout)
+
+
+def get_dashboard_error() -> Optional[BaseException]:
+    return _dashboard_error
+
+
+def _port_is_free(port: int) -> bool:
+    """Return True if nothing is actively accepting connections on port."""
+    import socket
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.25):
+            return False
+    except OSError:
+        # Nothing listening (or filtered) — treat as available.
+        return True
+
+
+def find_available_port(start_port: int = 8080, max_attempts: int = 20) -> int:
+    for p in range(start_port, start_port + max_attempts):
+        if _port_is_free(p):
+            return p
+    raise OSError(f"No free port in range {start_port}-{start_port + max_attempts - 1}")
+
+
+@app.on_event("startup")
+async def _on_dashboard_startup():
+    _dashboard_ready.set()
+
+
+def start_dashboard(port: int = 8080):
+    """
+    Bind the dashboard in this thread. Safe to call from a daemon thread
+    (signal handlers disabled). Tries port, port+1, ... on bind failure.
+    """
+    global ACTIVE_PORT, _dashboard_error
+    _dashboard_ready.clear()
+    _dashboard_error = None
+    last_err: Optional[BaseException] = None
+
+    for p in range(port, port + 20):
+        if not _port_is_free(p):
+            print(f"Dashboard: port {p} in use, trying next...", file=sys.stderr)
+            continue
+
+        ACTIVE_PORT = p
+        config = uvicorn.Config(
+            app,
+            host="0.0.0.0",
+            port=p,
+            log_level="error",
+            access_log=False,
+        )
+        server = uvicorn.Server(config)
+        # uvicorn signal handlers only work on the main thread
+        server.install_signal_handlers = lambda: None
+
+        try:
+            server.run()
+            return
+        except SystemExit as e:
+            last_err = e
+            _dashboard_ready.clear()
+            continue
+        except OSError as e:
+            last_err = e
+            _dashboard_ready.clear()
+            continue
+        except Exception as e:
+            last_err = e
+            _dashboard_error = e
+            _dashboard_ready.clear()
+            raise
+
+    _dashboard_error = last_err or RuntimeError(f"No free port near {port}")
+    raise RuntimeError(
+        f"Dashboard failed to bind any port in {port}-{port + 19}: {_dashboard_error}"
+    )
 

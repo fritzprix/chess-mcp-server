@@ -307,20 +307,30 @@ def main():
     """
     Main entry point for the Chess MCP Server.
     """
+    from src.web_dashboard import (
+        get_active_port,
+        wait_for_dashboard,
+        get_dashboard_error,
+    )
+
     t = threading.Thread(target=launch_dashboard_thread, daemon=True)
     t.start()
 
-    import time
-    from src.web_dashboard import get_active_port
-    time.sleep(0.5)
-    port = get_active_port()
-
-    try:
-        webbrowser.open(f"http://localhost:{port}")
-    except Exception:
-        pass
-
-    print(f"Chess MCP Server Running. Dashboard at http://localhost:{port}", file=sys.stderr)
+    if wait_for_dashboard(timeout=5.0):
+        port = get_active_port()
+        url = f"http://localhost:{port}"
+        try:
+            webbrowser.open(url)
+        except Exception:
+            pass
+        print(f"Chess MCP Server Running. Dashboard at {url}", file=sys.stderr)
+    else:
+        err = get_dashboard_error()
+        print(
+            f"Chess MCP Server Running, but dashboard failed to start on port "
+            f"{DASHBOARD_PORT}+: {err}",
+            file=sys.stderr,
+        )
 
     mcp.run(transport="stdio")
 
