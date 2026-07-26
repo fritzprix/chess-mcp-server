@@ -111,7 +111,8 @@ class ChessAI:
         for move in legal_moves:
             board.push(move)
             # Pass opposite of current turn because we just pushed a move and now it's opponent's turn to minimize/maximize
-            value = self._minimax(board, depth - 1, alpha, beta, not board.turn)
+            # board.turn is True for White; White maximizes the evaluation score
+            value = self._minimax(board, depth - 1, alpha, beta, board.turn)
             board.pop()
 
             if board.turn == chess.WHITE:

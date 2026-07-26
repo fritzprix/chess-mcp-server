@@ -7,7 +7,7 @@ project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from src.game_state import GameManager
+from src.game_state import GameManager, GameInstance
 from src.chess_engine import ChessAI
 from src.rendering import render_board_to_markdown
 
@@ -85,3 +85,43 @@ async def test_actionable_error_format():
     with pytest.raises(ValueError) as exc_info:
         await manager.make_move(game.id, "e2e8")
     assert "Sample legal moves:" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_wait_until_turn_no_lost_wakeup():
+    """Opponent move before wait must not hang (set/clear lost-wakeup regression)."""
+    manager = GameManager()
+    game = manager.create_game({"type": "agent", "color": "white"})
+    await manager.make_move(game.id, "e2e4")
+    await manager.make_move(game.id, "e7e5")  # back to white — signal already fired
+    status = await manager.wait_until_turn(game, chess.WHITE, timeout=1.0)
+    assert status == "my_turn"
+
+
+@pytest.mark.asyncio
+async def test_en_passant_capture_recorded():
+    manager = GameManager()
+    game = manager.create_game({"type": "agent"})
+    game.board.set_fen("rnbqkbnr/ppp1pppp/8/3pP3/8/8/PPPP1PPP/RNBQKBNR w KQkq d6 0 3")
+    await manager.make_move(game.id, "e5d6")
+    assert game.move_history[-1]["captured"] == "p"
+
+
+def test_pgn_result_mapping():
+    board = chess.Board()
+    # Fool's mate
+    board.push_san("f3")
+    board.push_san("e5")
+    board.push_san("g4")
+    board.push_san("Qh4")
+    game = GameInstance(id="test", board=board, config={})
+    assert game.result == "Black wins"
+    assert game.pgn_result == "0-1"
+
+
+def test_minimax_maximizing_uses_side_to_move():
+    ai = ChessAI()
+    board = chess.Board("r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1N1 w KQkq - 4 4")
+    move = ai.get_move(board, level=10)
+    assert move.uci() == "h5f7"
+

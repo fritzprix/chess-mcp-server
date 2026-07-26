@@ -773,6 +773,16 @@
             document.getElementById('board').appendChild(div);
         }
 
+        function resolveMoveUci(from, to) {
+            const prefix = from + to;
+            const legal = (currentGameState && currentGameState.legal_moves) ? currentGameState.legal_moves : [];
+            const candidates = legal.filter(m => m.startsWith(prefix));
+            if (candidates.length === 0) return prefix;
+            if (candidates.length === 1) return candidates[0];
+            const queenPromo = candidates.find(m => m.length === 5 && m[4] === 'q');
+            return queenPromo || candidates[0];
+        }
+
         function onSquareClick(coord, pieceChar, divElement) {
             if (viewingStepIndex !== -1) {
                 document.getElementById('statusMsg').innerText = "Click 'Latest Move' (>|) to exit history preview mode before making moves.";
@@ -791,7 +801,7 @@
                     document.getElementById('statusMsg').innerText = "";
                     refreshBoardView();
                 } else {
-                    const moveCandidate = selectedSq + coord;
+                    const moveCandidate = resolveMoveUci(selectedSq, coord);
                     document.getElementById('uciInput').value = moveCandidate;
                     selectedSq = null;
                     document.getElementById('statusMsg').innerText = "Ready to submit: " + moveCandidate;
@@ -991,6 +1001,25 @@
             };
         }
 
+        function fetchGameState() {
+            fetch(`/api/game/${gameId}/state`)
+                .then(res => res.json())
+                .then(data => updateState(data))
+                .catch(err => {
+                    console.error("Error fetching game state:", err);
+                    if (!currentGameState) {
+                        renderBoard(initialFen, null, false);
+                    }
+                });
+        }
+
+        window.addEventListener('DOMContentLoaded', () => {
+            renderCoordinates();
+            fetchGameState();
+            initSSE();
+            setInterval(fetchGameState, 2000);
+        });
+
         // PGN Download
         function downloadPGN() {
             window.location.href = `/api/game/${gameId}/pgn`;
@@ -1184,16 +1213,6 @@
                 document.getElementById('statusMsg').innerText = "✅ Game snapshot image downloaded!";
             }
         }
-
-        // Initialize Page
-        window.addEventListener('DOMContentLoaded', () => {
-            renderCoordinates();
-            fetch(`/api/game/${gameId}/state`)
-                .then(res => res.json())
-                .then(data => updateState(data))
-                .catch(() => renderBoard(initialFen, null, false));
-            initSSE();
-        });
     </script>
 </body>
 </html>

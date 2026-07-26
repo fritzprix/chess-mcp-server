@@ -107,7 +107,9 @@ async def game_events_sse(game_id: str, request: Request):
 
     async def event_generator():
         q = asyncio.Queue()
-        game.listeners.append(q)
+        loop = asyncio.get_running_loop()
+        entry = (loop, q)
+        game.listeners.append(entry)
         try:
             # Send initial state event
             initial_data = game.get_full_state()
@@ -124,8 +126,8 @@ async def game_events_sse(game_id: str, request: Request):
                     # Ping keepalive
                     yield ": ping\n\n"
         finally:
-            if q in game.listeners:
-                game.listeners.remove(q)
+            if entry in game.listeners:
+                game.listeners.remove(entry)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
@@ -134,7 +136,9 @@ async def dashboard_events_sse(request: Request):
     """Server-Sent Events endpoint for real-time dashboard updates."""
     async def event_generator():
         q = asyncio.Queue()
-        manager.dashboard_listeners.append(q)
+        loop = asyncio.get_running_loop()
+        entry = (loop, q)
+        manager.dashboard_listeners.append(entry)
         try:
             initial_data = {
                 "event_type": "init",
@@ -151,8 +155,8 @@ async def dashboard_events_sse(request: Request):
                 except asyncio.TimeoutError:
                     yield ": ping\n\n"
         finally:
-            if q in manager.dashboard_listeners:
-                manager.dashboard_listeners.remove(q)
+            if entry in manager.dashboard_listeners:
+                manager.dashboard_listeners.remove(entry)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
@@ -168,8 +172,7 @@ async def get_game_pgn(game_id: str):
     pgn_game.headers["Site"] = "Chess MCP Server"
     pgn_game.headers["White"] = "Player 1"
     pgn_game.headers["Black"] = "Player 2"
-    if game.result:
-        pgn_game.headers["Result"] = game.result
+    pgn_game.headers["Result"] = game.pgn_result
 
     node = pgn_game
     temp_board = chess.Board()
