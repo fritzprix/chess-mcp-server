@@ -213,6 +213,29 @@ class GameManager:
             self._load_from_disk()
             return self.games.get(game_id)
         
+    def clear_games(self, clear_all=True):
+        with self._lock:
+            if clear_all:
+                self.games.clear()
+            else:
+                self.games = {g_id: g for g_id, g in self.games.items() if not g.is_game_over}
+            
+            data = {}
+            for g_id, g in self.games.items():
+                data[g_id] = {
+                    "id": g.id,
+                    "fen": g.board.fen(),
+                    "config": g.config,
+                    "move_history": g.move_history
+                }
+            for path in self._get_save_paths():
+                try:
+                    with open(path, "w", encoding="utf-8") as f:
+                        json.dump(data, f, ensure_ascii=False, indent=2)
+                except Exception:
+                    pass
+            self._notify_dashboard("games_cleared", "")
+
     def list_games(self):
         with self._lock:
             self._load_from_disk()

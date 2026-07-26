@@ -241,13 +241,19 @@
 
         <div class="filter-bar">
             <div class="filter-buttons">
-                <button class="filter-btn active" data-filter="all" onclick="setFilter('all')">All Games</button>
+                <button class="filter-btn active" data-filter="active" onclick="setFilter('active')">Active Games</button>
+                <button class="filter-btn" data-filter="all" onclick="setFilter('all')">All Games</button>
                 <button class="filter-btn" data-filter="computer" onclick="setFilter('computer')">vs Computer</button>
                 <button class="filter-btn" data-filter="agent" onclick="setFilter('agent')">vs Agent</button>
                 <button class="filter-btn" data-filter="human" onclick="setFilter('human')">vs Human</button>
             </div>
-            <div style="font-size: 0.9rem; color: var(--text-secondary);">
-                Total Games: <strong id="gameCount">0</strong>
+            <div style="display:flex; align-items:center; gap:12px;">
+                <div style="font-size: 0.9rem; color: var(--text-secondary);">
+                    Total: <strong id="gameCount">0</strong>
+                </div>
+                <button class="btn-copy" onclick="clearGames()" style="background:#e74c3c; color:#fff; border:none; padding:6px 12px; border-radius:6px; font-weight:600; cursor:pointer;">
+                    🗑️ Clear Games
+                </button>
             </div>
         </div>
 
@@ -274,7 +280,7 @@
 
     <script>
         let allGames = {{ games | tojson }};
-        let currentFilter = 'all';
+        let currentFilter = 'active';
 
         function copyJoin(gameId) {
             const text = "Please join game " + gameId;
@@ -283,6 +289,18 @@
             }).catch(err => {
                 prompt("Copy this text:", text);
             });
+        }
+
+        function clearGames() {
+            if (confirm("Are you sure you want to clear all test games from history?")) {
+                fetch('/api/dashboard/clear', { method: 'POST' })
+                    .then(res => res.json())
+                    .then(data => {
+                        allGames = [];
+                        renderTable();
+                    })
+                    .catch(err => console.error("Error clearing games:", err));
+            }
         }
 
         function setFilter(filterType) {
@@ -296,6 +314,7 @@
         function renderTable() {
             const tbody = document.getElementById('gameTableBody');
             let filtered = allGames;
+            if (currentFilter === 'active') filtered = allGames.filter(g => !g.is_game_over);
             if (currentFilter === 'computer') filtered = allGames.filter(g => g.type === 'computer');
             if (currentFilter === 'human') filtered = allGames.filter(g => g.type === 'human');
             if (currentFilter === 'agent') filtered = allGames.filter(g => g.type === 'agent');
