@@ -104,7 +104,19 @@ class GameInstance:
 
 class GameManager:
     _instance = None
-    _save_file = os.path.join(os.path.expanduser("~"), ".chess_mcp_games.json")
+    
+    @classmethod
+    def _get_save_paths(cls):
+        import tempfile
+        paths = [
+            os.path.join(tempfile.gettempdir(), "chess_mcp_games.json"),
+            os.path.join(os.path.expanduser("~"), ".chess_mcp_games.json")
+        ]
+        unique_paths = []
+        for p in paths:
+            if p not in unique_paths:
+                unique_paths.append(p)
+        return unique_paths
     
     def __new__(cls):
         if cls._instance is None:
@@ -125,31 +137,39 @@ class GameManager:
                     "config": g.config,
                     "move_history": g.move_history
                 }
-            with open(self._save_file, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
+            for path in self._get_save_paths():
+                try:
+                    with open(path, "w", encoding="utf-8") as f:
+                        json.dump(data, f, ensure_ascii=False, indent=2)
+                except Exception as e:
+                    import sys
+                    print(f"Warning: Failed to save game state to {path}: {e}", file=sys.stderr)
+        except Exception as e:
+            import sys
+            print(f"Warning: Failed to serialize game state: {e}", file=sys.stderr)
 
     def _load_from_disk(self):
-        if not os.path.exists(self._save_file):
-            return
-        try:
-            with open(self._save_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            for g_id, item in data.items():
-                if g_id not in self.games:
-                    board = chess.Board(item["fen"])
-                    ai = ChessAI() if item.get("config", {}).get("type") == "computer" else None
-                    game = GameInstance(
-                        id=g_id,
-                        board=board,
-                        config=item.get("config", {}),
-                        ai=ai,
-                        move_history=item.get("move_history", [])
-                    )
-                    self.games[g_id] = game
-        except Exception:
-            pass
+        for path in self._get_save_paths():
+            if not os.path.exists(path):
+                continue
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                for g_id, item in data.items():
+                    if g_id not in self.games:
+                        board = chess.Board(item["fen"])
+                        ai = ChessAI() if item.get("config", {}).get("type") == "computer" else None
+                        game = GameInstance(
+                            id=g_id,
+                            board=board,
+                            config=item.get("config", {}),
+                            ai=ai,
+                            move_history=item.get("move_history", [])
+                        )
+                        self.games[g_id] = game
+            except Exception as e:
+                import sys
+                print(f"Warning: Failed to load game state from {path}: {e}", file=sys.stderr)
 
     def create_game(self, config: dict) -> GameInstance:
         with self._lock:

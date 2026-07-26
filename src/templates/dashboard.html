@@ -355,6 +355,7 @@
             renderTable();
             fetchGames();
             initDashboardSSE();
+            setInterval(fetchGames, 3000);
         });
     </script>
 </body>
