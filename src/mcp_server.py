@@ -273,13 +273,18 @@ def main():
     t = threading.Thread(target=launch_dashboard_thread, daemon=True)
     t.start()
     
+    import time
+    from src.web_dashboard import get_active_port
+    time.sleep(0.5)
+    port = get_active_port()
+
     # Open Browser (Best Effort)
     try:
-        webbrowser.open(f"http://localhost:{DASHBOARD_PORT}")
+        webbrowser.open(f"http://localhost:{port}")
     except:
         pass
         
-    print(f"Chess MCP Server Running. Dashboard at http://localhost:{DASHBOARD_PORT}", file=sys.stderr)
+    print(f"Chess MCP Server Running. Dashboard at http://localhost:{port}", file=sys.stderr)
     
     # Run MCP
     mcp.run(transport="stdio")

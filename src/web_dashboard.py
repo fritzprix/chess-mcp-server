@@ -178,6 +178,25 @@ async def get_game_pgn(game_id: str):
         "Content-Disposition": f"attachment; filename=game_{game_id}.pgn"
     })
 
+ACTIVE_PORT = 8080
+
+def get_active_port():
+    return ACTIVE_PORT
+
+def find_available_port(start_port=8080, max_attempts=20):
+    import socket
+    for p in range(start_port, start_port + max_attempts):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                sock.bind(("0.0.0.0", p))
+                return p
+            except OSError:
+                continue
+    return start_port
+
 def start_dashboard(port=8080):
-    uvicorn.run(app, host="0.0.0.0", port=port, log_level="error")
+    global ACTIVE_PORT
+    ACTIVE_PORT = find_available_port(port)
+    uvicorn.run(app, host="0.0.0.0", port=ACTIVE_PORT, log_level="error")
 
