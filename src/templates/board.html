@@ -8,6 +8,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/gifshot@0.3.2/build/gifshot.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/webm-muxer@5.0.2/build/webm-muxer.js"></script>
     <style>
         :root {
             --bg-color: #121318;
@@ -617,10 +618,10 @@
                     <div style="display:flex; flex-direction:column; gap:4px; margin-bottom:4px;">
                         <label style="font-size:0.85rem; color:var(--text-secondary); font-weight:500;">Move Frame Duration:</label>
                         <select id="selReplaySpeed" style="padding:8px 12px; border-radius:8px; background:#121318; color:var(--text-primary); border:1px solid var(--panel-border); font-family:'Outfit', sans-serif;">
-                            <option value="5000" selected>5 seconds / move (Default)</option>
-                            <option value="3000">3 seconds / move</option>
-                            <option value="2000">2 seconds / move</option>
-                            <option value="1000">1 second / move</option>
+                            <option value="5000" selected>5s / move (playback)</option>
+                            <option value="3000">3s / move (playback)</option>
+                            <option value="2000">2s / move (playback)</option>
+                            <option value="1000">1s / move (playback)</option>
                         </select>
                     </div>
                     <button class="btn btn-action" onclick="downloadReplayVideo()">
@@ -1089,77 +1090,9 @@
             }
         }
 
-        // Replay Video Generator (MediaRecorder using offscreen Canvas)
-        function pickWebmMimeType() {
-            const candidates = [
-                'video/webm;codecs=vp9',
-                'video/webm;codecs=vp8',
-                'video/webm'
-            ];
-            for (const t of candidates) {
-                if (window.MediaRecorder && MediaRecorder.isTypeSupported(t)) return t;
-            }
-            return '';
-        }
-
-        async function downloadReplayVideo() {
-            if (!currentHistory || currentHistory.length === 0) {
-                alert("No moves recorded in this game yet!");
-                return;
-            }
-            if (!window.MediaRecorder || !HTMLCanvasElement.prototype.captureStream) {
-                alert("WebM recording is not supported in this browser. Use GIF download instead.");
-                return;
-            }
-
-            const mimeType = pickWebmMimeType();
-            if (!mimeType) {
-                alert("MediaRecorder webm format not supported on this browser. Use GIF download instead.");
-                return;
-            }
-
-            const delayMs = parseInt(document.getElementById('selReplaySpeed').value) || 5000;
-            const totalDurationSec = Math.round(((currentHistory.length + 1) * delayMs) / 1000);
-            document.getElementById('statusMsg').innerText =
-                `🎬 Recording ${totalDurationSec}s Replay Video (${delayMs / 1000}s/move)... Please wait.`;
-
-            const canvas = document.createElement('canvas');
-            const width = 640;
-            const height = 710;
-            canvas.width = width;
-            canvas.height = height;
-            // Keep canvas in DOM (hidden) — some browsers skip captureStream for detached canvases.
-            canvas.style.cssText = 'position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0;pointer-events:none;';
-            document.body.appendChild(canvas);
-            const ctx = canvas.getContext('2d', { willReadFrequently: true });
-
-            // fps=0 → push frames explicitly via requestFrame after each draw.
-            const stream = canvas.captureStream(0);
-            const track = stream.getVideoTracks()[0];
-
-            let mediaRecorder;
-            try {
-                mediaRecorder = new MediaRecorder(stream, {
-                    mimeType,
-                    videoBitsPerSecond: 2_500_000
-                });
-            } catch (e) {
-                canvas.remove();
-                alert("MediaRecorder webm format not supported on this browser.");
-                return;
-            }
-
-            const chunks = [];
-            mediaRecorder.ondataavailable = (e) => {
-                if (e.data && e.data.size > 0) chunks.push(e.data);
-            };
-
-            const stopped = new Promise((resolve, reject) => {
-                mediaRecorder.onstop = () => resolve();
-                mediaRecorder.onerror = (ev) => reject(ev.error || new Error('MediaRecorder error'));
-            });
-
-            const frames = [
+        // Same frame pipeline as GIF. WebM = offline WebCodecs encode (no realtime wait).
+        function getReplayFrameSpecs() {
+            return [
                 { fen: initialFen, moveInfo: null, title: "Start Position" },
                 ...currentHistory.map(h => ({
                     fen: h.fen,
@@ -1167,60 +1100,175 @@
                     title: `Move ${h.move_number}: ${h.turn} played ${h.san}`
                 }))
             ];
+        }
 
-            function paintFrame(f, index) {
-                drawReplayFrameToCanvas(ctx, f.fen, width, height, f.moveInfo, f.title, index, frames.length);
-                // Force a captured frame for captureStream(0) / static canvases.
-                if (track && typeof track.requestFrame === 'function') {
-                    track.requestFrame();
+        function buildReplayFrameImages(width, height) {
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            const frames = getReplayFrameSpecs();
+            const frameImages = [];
+            for (let i = 0; i < frames.length; i++) {
+                const f = frames[i];
+                drawReplayFrameToCanvas(ctx, f.fen, width, height, f.moveInfo, f.title, i, frames.length);
+                frameImages.push(canvas.toDataURL('image/png'));
+            }
+            return frameImages;
+        }
+
+        function createReplayGifDataUrl(frameImages, delaySec, width, height) {
+            return new Promise((resolve, reject) => {
+                if (typeof gifshot === 'undefined') {
+                    reject(new Error('gifshot failed to load'));
+                    return;
+                }
+                gifshot.createGIF({
+                    images: frameImages,
+                    interval: delaySec,
+                    gifWidth: width,
+                    gifHeight: height,
+                    numFrames: frameImages.length
+                }, function (obj) {
+                    if (obj.error || !obj.image) {
+                        reject(new Error(obj.error || 'GIF generation failed'));
+                        return;
+                    }
+                    resolve(obj.image);
+                });
+            });
+        }
+
+        function triggerDownload(hrefOrUrl, filename) {
+            const a = document.createElement('a');
+            a.href = hrefOrUrl;
+            a.download = filename;
+            a.click();
+        }
+
+        async function pickWebCodecsVideoConfig(width, height) {
+            if (!window.VideoEncoder || !window.VideoFrame) return null;
+            const candidates = [
+                { codec: 'vp09.00.10.08', muxCodec: 'V_VP9' },
+                { codec: 'vp8', muxCodec: 'V_VP8' }
+            ];
+            for (const c of candidates) {
+                const config = {
+                    codec: c.codec,
+                    width,
+                    height,
+                    bitrate: 2_500_000,
+                    framerate: 30
+                };
+                try {
+                    if (VideoEncoder.isConfigSupported) {
+                        const { supported } = await VideoEncoder.isConfigSupported(config);
+                        if (!supported) continue;
+                    }
+                    return { ...c, config };
+                } catch (_) {
+                    // try next codec
+                }
+            }
+            return null;
+        }
+
+        async function encodeReplayWebmOffline(frames, delayMs, width, height) {
+            const muxerApi = window.WebMMuxer;
+            if (!muxerApi || !muxerApi.Muxer || !muxerApi.ArrayBufferTarget) {
+                throw new Error('webm-muxer failed to load');
+            }
+            const picked = await pickWebCodecsVideoConfig(width, height);
+            if (!picked) {
+                throw new Error('WebCodecs VideoEncoder is not available in this browser');
+            }
+
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d', { alpha: false, willReadFrequently: true });
+
+            const target = new muxerApi.ArrayBufferTarget();
+            const muxer = new muxerApi.Muxer({
+                target,
+                video: { codec: picked.muxCodec, width, height },
+                firstTimestampBehavior: 'offset'
+            });
+
+            let encodeError = null;
+            const encoder = new VideoEncoder({
+                output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+                error: (e) => { encodeError = e; }
+            });
+            encoder.configure(picked.config);
+
+            const durationUs = Math.max(1, delayMs) * 1000;
+            let timestampUs = 0;
+
+            for (let i = 0; i < frames.length; i++) {
+                if (encodeError) throw encodeError;
+                const f = frames[i];
+                drawReplayFrameToCanvas(ctx, f.fen, width, height, f.moveInfo, f.title, i, frames.length);
+                const frame = new VideoFrame(canvas, {
+                    timestamp: timestampUs,
+                    duration: durationUs
+                });
+                encoder.encode(frame, { keyFrame: i === 0 || (i % 12) === 0 });
+                frame.close();
+                timestampUs += durationUs;
+
+                if (i === 0 || i === frames.length - 1 || (i % 5) === 0) {
+                    document.getElementById('statusMsg').innerText =
+                        `🎬 Encoding WebM ${i + 1}/${frames.length}...`;
+                    await new Promise(r => setTimeout(r, 0));
                 }
             }
 
-            async function holdFrame(f, index, ms) {
-                const frameInterval = 1000 / 30;
-                const end = performance.now() + ms;
-                // Redraw periodically so the encoder receives real timed samples.
-                while (performance.now() < end) {
-                    paintFrame(f, index);
-                    await new Promise(r => setTimeout(r, frameInterval));
-                }
+            // Muxers often treat duration as last timestamp; add a 1ms tail so the
+            // final position keeps its full playback delay.
+            if (!encodeError) {
+                const tail = new VideoFrame(canvas, { timestamp: timestampUs, duration: 1000 });
+                encoder.encode(tail, { keyFrame: false });
+                tail.close();
             }
+
+            await encoder.flush();
+            if (encodeError) throw encodeError;
+            encoder.close();
+            muxer.finalize();
+
+            const blob = new Blob([target.buffer], { type: 'video/webm' });
+            if (blob.size < 256) {
+                throw new Error(`Recording produced an empty video (${blob.size} bytes).`);
+            }
+            return blob;
+        }
+
+        async function downloadReplayVideo() {
+            if (!currentHistory || currentHistory.length === 0) {
+                alert("No moves recorded in this game yet!");
+                return;
+            }
+
+            const delayMs = parseInt(document.getElementById('selReplaySpeed').value) || 5000;
+            const frames = getReplayFrameSpecs();
+            const width = 480;
+            const height = 550;
+
+            document.getElementById('statusMsg').innerText =
+                `🎬 Encoding WebM (${frames.length} frames, ${delayMs / 1000}s/move when played)...`;
 
             try {
-                // Paint once before start so the first keyframe is not empty/black.
-                paintFrame(frames[0], 0);
-                mediaRecorder.start(200);
-
-                for (let i = 0; i < frames.length; i++) {
-                    await holdFrame(frames[i], i, delayMs);
-                }
-
-                // Flush remaining data then stop.
-                if (mediaRecorder.state === 'recording') {
-                    mediaRecorder.requestData();
-                    mediaRecorder.stop();
-                }
-                await stopped;
-
-                const blob = new Blob(chunks, { type: mimeType });
-                if (blob.size < 256) {
-                    throw new Error(`Recording produced an empty video (${blob.size} bytes).`);
-                }
-
+                const blob = await encodeReplayWebmOffline(frames, delayMs, width, height);
                 const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `chess_replay_${gameId}.webm`;
-                a.click();
+                triggerDownload(url, `chess_replay_${gameId}.webm`);
                 setTimeout(() => URL.revokeObjectURL(url), 10_000);
                 document.getElementById('statusMsg').innerText = "✅ Replay video downloaded successfully!";
             } catch (err) {
-                console.error('WebM recording failed:', err);
-                document.getElementById('statusMsg').innerText = "❌ WebM recording failed. Try GIF instead.";
-                alert("WebM recording failed: " + (err && err.message ? err.message : String(err)));
-            } finally {
-                stream.getTracks().forEach(t => t.stop());
-                canvas.remove();
+                console.error('WebM export failed:', err);
+                document.getElementById('statusMsg').innerText = "❌ WebM export failed. Try GIF instead.";
+                alert("WebM export failed: " + (err && err.message ? err.message : String(err)) +
+                    "\n\nUse GIF download instead (Chrome/Edge recommended for WebM).");
             }
         }
 
@@ -1233,58 +1281,20 @@
 
             const delayMs = parseInt(document.getElementById('selReplaySpeed').value) || 5000;
             const delaySec = delayMs / 1000;
-            document.getElementById('statusMsg').innerText = `🖼️ Generating Animated GIF (${delaySec}s per move)... Please wait.`;
-
-            const canvas = document.createElement('canvas');
             const width = 480;
             const height = 550;
-            canvas.width = width;
-            canvas.height = height;
-            const ctx = canvas.getContext('2d');
+            document.getElementById('statusMsg').innerText =
+                `🖼️ Generating Animated GIF (${delaySec}s per move)... Please wait.`;
 
-            const frames = [
-                { fen: initialFen, moveInfo: null, title: "Start Position" },
-                ...currentHistory.map(h => ({
-                    fen: h.fen,
-                    moveInfo: h,
-                    title: `Move ${h.move_number}: ${h.turn} played ${h.san}`
-                }))
-            ];
-
-            const frameImages = [];
-            for (let i = 0; i < frames.length; i++) {
-                const f = frames[i];
-                drawReplayFrameToCanvas(ctx, f.fen, width, height, f.moveInfo, f.title, i, frames.length);
-                frameImages.push(canvas.toDataURL('image/png'));
-            }
-
-            if (typeof gifshot !== 'undefined') {
-                gifshot.createGIF({
-                    images: frameImages,
-                    interval: delaySec,
-                    gifWidth: width,
-                    gifHeight: height,
-                    numFrames: frameImages.length
-                }, function (obj) {
-                    if (!obj.error) {
-                        const a = document.createElement('a');
-                        a.href = obj.image;
-                        a.download = `chess_replay_${gameId}.gif`;
-                        a.click();
-                        document.getElementById('statusMsg').innerText = "✅ Animated GIF downloaded successfully!";
-                    } else {
-                        fallbackPngDownload();
-                    }
-                });
-            } else {
-                fallbackPngDownload();
-            }
-
-            function fallbackPngDownload() {
-                const a = document.createElement('a');
-                a.href = frameImages[frameImages.length - 1];
-                a.download = `chess_game_${gameId}_snapshot.png`;
-                a.click();
+            try {
+                const frameImages = buildReplayFrameImages(width, height);
+                const gifDataUrl = await createReplayGifDataUrl(frameImages, delaySec, width, height);
+                triggerDownload(gifDataUrl, `chess_replay_${gameId}.gif`);
+                document.getElementById('statusMsg').innerText = "✅ Animated GIF downloaded successfully!";
+            } catch (err) {
+                console.error('GIF export failed:', err);
+                const frameImages = buildReplayFrameImages(width, height);
+                triggerDownload(frameImages[frameImages.length - 1], `chess_game_${gameId}_snapshot.png`);
                 document.getElementById('statusMsg').innerText = "✅ Game snapshot image downloaded!";
             }
         }
