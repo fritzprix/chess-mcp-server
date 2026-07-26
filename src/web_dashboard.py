@@ -1,29 +1,31 @@
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse, StreamingResponse, Response
+from pydantic import BaseModel
 import uvicorn
 import asyncio
-from typing import List
+import os
+import re
+import json
+import importlib.metadata
+import chess.pgn
+from typing import List, Optional
 from src.game_state import GameManager
 from src.rendering import render_board_to_html
 
 app = FastAPI(title="Chess MCP Dashboard")
 manager = GameManager()
 
-
-import os
-import re
-import importlib.metadata
+class MoveRequest(BaseModel):
+    move: str
+    claim_win: bool = False
 
 def get_version():
-    # First try to get the version from the installed package
     try:
         return importlib.metadata.version("chess-mcp-server")
     except importlib.metadata.PackageNotFoundError:
         pass
 
-    # Fallback to reading pyproject.toml for local development
     try:
-        # Assuming pyproject.toml is in the root, one level up from src
         current_dir = os.path.dirname(os.path.abspath(__file__))
         project_root = os.path.dirname(current_dir)
         pyproject_path = os.path.join(project_root, "pyproject.toml")
@@ -44,7 +46,6 @@ async def index():
     
     from jinja2 import Environment, FileSystemLoader
     
-    # Setup Jinja2
     current_dir = os.path.dirname(os.path.abspath(__file__))
     templates_dir = os.path.join(current_dir, "templates")
     env = Environment(loader=FileSystemLoader(templates_dir))
@@ -63,20 +64,114 @@ async def view_game(game_id: str):
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")
         
-    # We reuse the render logic but disable interaction for spectator? 
-    # Or keep it interactive but actions won't work if not via MCP?
-    # Actually, the postMessage logic won't work in a normal browser (no parent).
-    # So we should render a read-only version or one that logs to console.
-    
-    # For now, let's just reuse the HTML generator
-    html = render_board_to_html(game.board.fen(), game.id)
-    
-    # Wrap in a back link
-    wrapper = f"""
-    <div><a href="/"><< Back to Dashboard</a></div>
-    {html}
-    """
-    return wrapper
+    html = render_board_to_html(game.board.fen(), game.id, is_white_perspective=True)
+    return html
+
+@app.get("/api/game/{game_id}/state")
+async def get_game_state(game_id: str):
+    game = manager.get_game(game_id)
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found")
+    return game.get_full_state()
+
+@app.post("/api/game/{game_id}/move")
+async def make_game_move(game_id: str, req: MoveRequest):
+    game = manager.get_game(game_id)
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found")
+    try:
+        result = await manager.make_move(game_id, req.move, req.claim_win)
+        return {"status": "ok", "message": result, "state": game.get_full_state()}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/game/{game_id}/events")
+async def game_events_sse(game_id: str, request: Request):
+    """Server-Sent Events endpoint for real-time game updates."""
+    game = manager.get_game(game_id)
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found")
+
+    async def event_generator():
+        q = asyncio.Queue()
+        game.listeners.append(q)
+        try:
+            # Send initial state event
+            initial_data = game.get_full_state()
+            initial_data["event_type"] = "init"
+            yield f"data: {json.dumps(initial_data)}\n\n"
+
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    data = await asyncio.wait_for(q.get(), timeout=15.0)
+                    yield f"data: {json.dumps(data)}\n\n"
+                except asyncio.TimeoutError:
+                    # Ping keepalive
+                    yield ": ping\n\n"
+        finally:
+            if q in game.listeners:
+                game.listeners.remove(q)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+@app.get("/api/dashboard/events")
+async def dashboard_events_sse(request: Request):
+    """Server-Sent Events endpoint for real-time dashboard updates."""
+    async def event_generator():
+        q = asyncio.Queue()
+        manager.dashboard_listeners.append(q)
+        try:
+            initial_data = {
+                "event_type": "init",
+                "games": manager.list_games()
+            }
+            yield f"data: {json.dumps(initial_data)}\n\n"
+
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    data = await asyncio.wait_for(q.get(), timeout=15.0)
+                    yield f"data: {json.dumps(data)}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": ping\n\n"
+        finally:
+            if q in manager.dashboard_listeners:
+                manager.dashboard_listeners.remove(q)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+@app.get("/api/game/{game_id}/pgn")
+async def get_game_pgn(game_id: str):
+    """Generates PGN text for game replay export."""
+    game = manager.get_game(game_id)
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found")
+
+    pgn_game = chess.pgn.Game()
+    pgn_game.headers["Event"] = f"Chess MCP Game {game_id}"
+    pgn_game.headers["Site"] = "Chess MCP Server"
+    pgn_game.headers["White"] = "Player 1"
+    pgn_game.headers["Black"] = "Player 2"
+    if game.result:
+        pgn_game.headers["Result"] = game.result
+
+    node = pgn_game
+    temp_board = chess.Board()
+    for move_info in game.move_history:
+        move = chess.Move.from_uci(move_info["uci"])
+        node = node.add_variation(move)
+        temp_board.push(move)
+
+    pgn_text = str(pgn_game)
+    return Response(content=pgn_text, media_type="application/x-chess-pgn", headers={
+        "Content-Disposition": f"attachment; filename=game_{game_id}.pgn"
+    })
 
 def start_dashboard(port=8080):
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="error")
+

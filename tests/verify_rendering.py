@@ -46,7 +46,7 @@ def verify_rendering():
         print("FAILURE: Legend not found.")
         
     # Check for Player Color
-    if "You are playing: White" in output:
+    if "**You are playing**: White" in output:
         print("SUCCESS: Player color found.")
     else:
         print("FAILURE: Player color not found.")

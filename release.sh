@@ -10,10 +10,24 @@ get_current_version() {
 
 bump_version() {
     local current=$1
-    local type=$2 # patch, minor, major
+    local type=$2 # patch, minor, major, rc
 
+    if [ "$type" == "rc" ]; then
+        if [[ "$current" =~ ^([0-9]+\.[0-9]+\.[0-9]+)rc([0-9]+)$ ]]; then
+            local base="${BASH_REMATCH[1]}"
+            local num="${BASH_REMATCH[2]}"
+            echo "${base}rc$((num + 1))"
+        else
+            local next_patch=$(bump_version "$current" "patch")
+            echo "${next_patch}rc1"
+        fi
+        return
+    fi
+
+    # Strip rc suffix if bumping standard version
+    local clean_current="${current%%rc*}"
     local IFS='.'
-    read -r major minor patch <<< "$current"
+    read -r major minor patch <<< "$clean_current"
 
     case $type in
         patch)
@@ -38,14 +52,14 @@ bump_version() {
 ARG=$1
 
 if [ -z "$ARG" ]; then
-    echo "Usage: $0 [patch|minor|major|vX.Y.Z]"
+    echo "Usage: $0 [patch|minor|major|rc|vX.Y.Z]"
     exit 1
 fi
 
 CURRENT_VERSION=$(get_current_version)
 NEW_VERSION=""
 
-if [[ "$ARG" == "patch" || "$ARG" == "minor" || "$ARG" == "major" ]]; then
+if [[ "$ARG" == "patch" || "$ARG" == "minor" || "$ARG" == "major" || "$ARG" == "rc" ]]; then
     echo -e "\033[0;36mBumping version ($ARG) from $CURRENT_VERSION...\033[0m"
     NEW_VERSION=$(bump_version "$CURRENT_VERSION" "$ARG")
 else
@@ -62,8 +76,6 @@ echo -e "\033[0;32mTarget Tag:     $VERSION_TAG\033[0m"
 # 1. Update pyproject.toml if version changed
 if [ "$NEW_VERSION" != "$CURRENT_VERSION" ]; then
     echo -e "\033[0;36mUpdating $PYPROJECT_FILE...\033[0m"
-    # Use sed to replace the version line. 
-    # Works on most linux/mac environments.
     sed -i "s/^version = \".*\"/version = \"$NEW_VERSION\"/" "$PYPROJECT_FILE"
     
     # 2. Commit the change
@@ -105,7 +117,12 @@ fi
 
 # 6. Create GitHub Release
 echo -e "\033[0;36mCreating GitHub Release...\033[0m"
-gh release create "$VERSION_TAG" --generate-notes --title "Release $VERSION_TAG"
+PRERELEASE_FLAG=""
+if [[ "$NEW_VERSION" =~ (rc|beta|alpha|b|a) ]]; then
+    PRERELEASE_FLAG="--prerelease"
+fi
+
+gh release create "$VERSION_TAG" $PRERELEASE_FLAG --generate-notes --title "Release $VERSION_TAG"
 
 if [ $? -eq 0 ]; then
     echo -e "\033[0;32mRelease $VERSION_TAG created successfully!\033[0m"

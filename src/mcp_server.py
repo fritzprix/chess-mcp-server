@@ -323,7 +323,10 @@ def launch_dashboard_thread():
     """
     Wrapper to start the dashboard in a separate thread.
     """
-    start_dashboard(port=DASHBOARD_PORT)
+    try:
+        start_dashboard(port=DASHBOARD_PORT)
+    except Exception as e:
+        print(f"Dashboard server thread exception: {e}", file=sys.stderr)
 
 def main():
     """

@@ -1,7 +1,10 @@
 import asyncio
 import uuid
 import chess
-from typing import Dict, Optional
+import threading
+import json
+import os
+from typing import Dict, Optional, List
 from dataclasses import dataclass, field
 from .chess_engine import ChessAI
 
@@ -15,7 +18,15 @@ class GameInstance:
     
     # AI Engine if playing vs Computer
     ai: Optional[ChessAI] = None
+    ai_task: Optional[asyncio.Task] = None
     
+    # History of moves for visual play trace & replay
+    # List of dicts: {"move_number": int, "san": str, "uci": str, "fen": str, "turn": str, "captured": str}
+    move_history: List[dict] = field(default_factory=list)
+    
+    # Subscribers for SSE real-time updates
+    listeners: List[asyncio.Queue] = field(default_factory=list)
+
     @property
     def is_game_over(self):
         return self.board.is_game_over()
@@ -25,12 +36,71 @@ class GameInstance:
         if not self.is_game_over:
             return None
         outcome = self.board.outcome()
+        if outcome is None:
+            return None
         if outcome.winner == chess.WHITE:
             return "White wins"
         elif outcome.winner == chess.BLACK:
             return "Black wins"
         else:
             return "Draw"
+
+    def notify_listeners(self, event_type: str = "update"):
+        """Pushes state updates to all active SSE listener queues."""
+        data = self.get_full_state()
+        data["event_type"] = event_type
+        
+        # Remove dead queues or push event
+        to_remove = []
+        for q in self.listeners:
+            try:
+                q.put_nowait(data)
+            except Exception:
+                to_remove.append(q)
+        for q in to_remove:
+            if q in self.listeners:
+                self.listeners.remove(q)
+
+    def get_full_state(self) -> dict:
+        """Returns comprehensive game state dictionary."""
+        turn_str = "White" if self.board.turn == chess.WHITE else "Black"
+        last_move = self.move_history[-1] if self.move_history else None
+        
+        # Captured pieces calculation
+        captured_white = [] # White pieces captured by Black
+        captured_black = [] # Black pieces captured by White
+        
+        initial_pieces = {'P': 8, 'N': 2, 'B': 2, 'R': 2, 'Q': 1, 'K': 1,
+                          'p': 8, 'n': 2, 'b': 2, 'r': 2, 'q': 1, 'k': 1}
+        current_pieces = {}
+        for square in chess.SQUARES:
+            p = self.board.piece_at(square)
+            if p:
+                sym = p.symbol()
+                current_pieces[sym] = current_pieces.get(sym, 0) + 1
+                
+        for piece, count in initial_pieces.items():
+            missing = count - current_pieces.get(piece, 0)
+            if missing > 0:
+                if piece.isupper():
+                    captured_white.extend([piece] * missing)
+                else:
+                    captured_black.extend([piece] * missing)
+
+        return {
+            "id": self.id,
+            "fen": self.board.fen(),
+            "turn": turn_str,
+            "is_game_over": self.is_game_over,
+            "result": self.result,
+            "config": self.config,
+            "move_history": self.move_history,
+            "last_move": last_move,
+            "in_check": self.board.is_check(),
+            "legal_moves": [m.uci() for m in self.board.legal_moves],
+            "captured_white": captured_white,
+            "captured_black": captured_black
+        }
 
 class GameManager:
     _instance = None
@@ -39,38 +109,65 @@ class GameManager:
         if cls._instance is None:
             cls._instance = super(GameManager, cls).__new__(cls)
             cls._instance.games: Dict[str, GameInstance] = {}
+            cls._instance._lock = threading.RLock()
+            cls._instance.dashboard_listeners: List[asyncio.Queue] = []
         return cls._instance
 
     def create_game(self, config: dict) -> GameInstance:
-        game_id = str(uuid.uuid4())[:8]
-        board = chess.Board()
-        
-        ai = None
-        if config.get("type") == "computer":
-            ai = ChessAI()
+        with self._lock:
+            game_id = str(uuid.uuid4())[:8]
+            board = chess.Board()
             
-        game = GameInstance(
-            id=game_id,
-            board=board,
-            config=config,
-            ai=ai
-        )
-        self.games[game_id] = game
-        return game
+            ai = None
+            if config.get("type") == "computer":
+                ai = ChessAI()
+                
+            game = GameInstance(
+                id=game_id,
+                board=board,
+                config=config,
+                ai=ai
+            )
+            self.games[game_id] = game
+            self._notify_dashboard("game_created", game_id)
+            return game
 
     def get_game(self, game_id: str) -> Optional[GameInstance]:
-        return self.games.get(game_id)
+        with self._lock:
+            return self.games.get(game_id)
         
     def list_games(self):
-        return [
-            {
-                "id": g.id, 
-                "fen": g.board.fen(), 
-                "type": g.config.get("type"),
-                "turn": "White" if g.board.turn == chess.WHITE else "Black"
-            } 
-            for g in self.games.values()
-        ]
+        with self._lock:
+            return [
+                {
+                    "id": g.id, 
+                    "fen": g.board.fen(), 
+                    "type": g.config.get("type"),
+                    "turn": "White" if g.board.turn == chess.WHITE else "Black",
+                    "move_count": len(g.move_history),
+                    "is_game_over": g.is_game_over,
+                    "result": g.result
+                } 
+                for g in self.games.values()
+            ]
+
+    def _notify_dashboard(self, event_type: str, game_id: str):
+        """Pushes updates to dashboard subscribers."""
+        games_list = self.list_games()
+        event_data = {
+            "event_type": event_type,
+            "game_id": game_id,
+            "games": games_list
+        }
+        to_remove = []
+        for q in self.dashboard_listeners:
+            try:
+                q.put_nowait(event_data)
+            except Exception:
+                to_remove.append(q)
+        for q in to_remove:
+            if q in self.dashboard_listeners:
+                self.dashboard_listeners.remove(q)
 
     async def make_move(self, game_id: str, move_uci: str, claim_win: bool = False) -> str:
         """
@@ -89,30 +186,46 @@ class GameManager:
             raise ValueError(f"Invalid UCI move format: '{move_uci}'. Please use standard format like 'e2e4' (start_square+end_square).")
             
         if move not in game.board.legal_moves:
-             # Create a helpful list of some legal moves
+            # Create a helpful list of some legal moves
             sample_moves = ", ".join([str(m) for m in list(game.board.legal_moves)[:3]])
             raise ValueError(f"Illegal move: '{move_uci}'. Review the board state. Sample legal moves: {sample_moves}...")
             
+        # Record move details before pushing
+        san = game.board.san(move)
+        turn_str = "White" if game.board.turn == chess.WHITE else "Black"
+        captured = game.board.piece_at(move.to_square)
+        captured_str = captured.symbol() if captured else None
+        
         # Execute Move
         game.board.push(move)
+        
+        # Store move in history
+        move_entry = {
+            "move_number": (len(game.move_history) // 2) + 1,
+            "turn": turn_str,
+            "uci": move.uci(),
+            "san": san,
+            "fen": game.board.fen(),
+            "captured": captured_str
+        }
+        game.move_history.append(move_entry)
         
         # Check Claim
         if claim_win:
             if not game.board.is_checkmate():
-                 # Revert? No, usually valid move but false claim is just an error message, 
-                 # but spec said "Error - Failed Claim: Move rejected". So we should revert.
                  game.board.pop()
+                 game.move_history.pop()
                  raise ValueError("Move rejected: You claimed Checkmate, but this move does not result in Checkmate.")
         
-        # Notify waiters (User or Agent waiting for this move)
+        # Notify waiters & SSE listeners
         game.move_event.set()
         game.move_event.clear() # Reset for next turn
+        game.notify_listeners(event_type="move")
+        self._notify_dashboard("game_updated", game_id)
         
         # If vs Computer and it's Computer's turn now (and game not over)
         if game.config.get("type") == "computer" and not game.board.is_game_over():
-            # Trigger Background AI Move
-            # We use asyncio.create_task to run it without blocking the return of this function
-            asyncio.create_task(self._computer_turn(game))
+            game.ai_task = asyncio.create_task(self._computer_turn(game))
             
         return "Move accepted"
 
@@ -120,15 +233,33 @@ class GameManager:
         """
         Calculates and executes computer move.
         """
-        # Simulate thinking time?
         await asyncio.sleep(0.5)
         
         difficulty = game.config.get("difficulty", 5)
         ai_move = game.ai.get_move(game.board, difficulty)
         
         if ai_move:
+            san = game.board.san(ai_move)
+            turn_str = "White" if game.board.turn == chess.WHITE else "Black"
+            captured = game.board.piece_at(ai_move.to_square)
+            captured_str = captured.symbol() if captured else None
+            
             game.board.push(ai_move)
-            # Notify waiters (Agent waiting for computer)
+            
+            move_entry = {
+                "move_number": (len(game.move_history) // 2) + 1,
+                "turn": turn_str,
+                "uci": ai_move.uci(),
+                "san": san,
+                "fen": game.board.fen(),
+                "captured": captured_str
+            }
+            game.move_history.append(move_entry)
+            
+            # Notify waiters (Agent waiting for computer) & SSE listeners
             game.move_event.set()
             game.move_event.clear()
+            game.notify_listeners(event_type="move")
+            self._notify_dashboard("game_updated", game.id)
+
             
