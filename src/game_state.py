@@ -130,6 +130,18 @@ class GameManager:
     def _save_to_disk(self):
         try:
             data = {}
+            # 1. Read existing disk data to preserve games from other processes
+            for path in self._get_save_paths():
+                if os.path.exists(path):
+                    try:
+                        with open(path, "r", encoding="utf-8") as f:
+                            disk_content = json.load(f)
+                            if isinstance(disk_content, dict):
+                                data.update(disk_content)
+                    except Exception:
+                        pass
+
+            # 2. Update/Merge in-memory games
             for g_id, g in self.games.items():
                 data[g_id] = {
                     "id": g.id,
@@ -137,6 +149,8 @@ class GameManager:
                     "config": g.config,
                     "move_history": g.move_history
                 }
+
+            # 3. Save merged data
             for path in self._get_save_paths():
                 try:
                     with open(path, "w", encoding="utf-8") as f:
@@ -155,6 +169,8 @@ class GameManager:
             try:
                 with open(path, "r", encoding="utf-8") as f:
                     data = json.load(f)
+                if not isinstance(data, dict):
+                    continue
                 for g_id, item in data.items():
                     if g_id not in self.games:
                         board = chess.Board(item["fen"])
@@ -173,6 +189,7 @@ class GameManager:
 
     def create_game(self, config: dict) -> GameInstance:
         with self._lock:
+            self._load_from_disk()
             game_id = str(uuid.uuid4())[:8]
             board = chess.Board()
             

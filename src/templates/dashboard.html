@@ -241,9 +241,10 @@
 
         <div class="filter-bar">
             <div class="filter-buttons">
-                <button class="filter-btn active" onclick="setFilter('all')">All Games</button>
-                <button class="filter-btn" onclick="setFilter('computer')">vs Computer</button>
-                <button class="filter-btn" onclick="setFilter('human')">vs Human</button>
+                <button class="filter-btn active" data-filter="all" onclick="setFilter('all')">All Games</button>
+                <button class="filter-btn" data-filter="computer" onclick="setFilter('computer')">vs Computer</button>
+                <button class="filter-btn" data-filter="agent" onclick="setFilter('agent')">vs Agent</button>
+                <button class="filter-btn" data-filter="human" onclick="setFilter('human')">vs Human</button>
             </div>
             <div style="font-size: 0.9rem; color: var(--text-secondary);">
                 Total Games: <strong id="gameCount">0</strong>
@@ -287,7 +288,7 @@
         function setFilter(filterType) {
             currentFilter = filterType;
             document.querySelectorAll('.filter-btn').forEach(btn => {
-                btn.classList.toggle('active', btn.textContent.toLowerCase().includes(filterType));
+                btn.classList.toggle('active', btn.getAttribute('data-filter') === filterType);
             });
             renderTable();
         }
@@ -297,6 +298,7 @@
             let filtered = allGames;
             if (currentFilter === 'computer') filtered = allGames.filter(g => g.type === 'computer');
             if (currentFilter === 'human') filtered = allGames.filter(g => g.type === 'human');
+            if (currentFilter === 'agent') filtered = allGames.filter(g => g.type === 'agent');
 
             document.getElementById('gameCount').innerText = filtered.length;
 
