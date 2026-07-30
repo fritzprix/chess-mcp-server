@@ -118,3 +118,37 @@ async def test_agent_vs_computer():
             assert "**FEN**" in content_text, "Did not receive board state"
 
     print("\nE2E Test COMPLETED SUCCESSFULLY.")
+
+
+def test_mcp_dependency_version_upper_bound():
+    """Regression test: pyproject.toml must enforce mcp < 2.0.0 to prevent FastMCP breakage."""
+    pyproject_path = os.path.join(project_root, "pyproject.toml")
+    with open(pyproject_path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    assert "<2.0.0" in content, "pyproject.toml missing '<2.0.0' upper bound for mcp dependency!"
+
+
+def test_fastmcp_import_regression():
+    """Regression test: FastMCP module import must succeed without ModuleNotFoundError."""
+    from mcp.server.fastmcp import FastMCP
+    assert FastMCP is not None
+
+
+@pytest.mark.asyncio
+async def test_fast_initialization_handshake():
+    """Regression test: MCP initialize() handshake must complete quickly (< 2.0s)."""
+    server_params = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "src.mcp_server"],
+        env=os.environ.copy()
+    )
+
+    async with stdio_client(server_params) as (read, write):
+        async with ClientSession(read, write) as session:
+            start_time = asyncio.get_event_loop().time()
+            init_res = await asyncio.wait_for(session.initialize(), timeout=2.0)
+            elapsed = asyncio.get_event_loop().time() - start_time
+            assert init_res is not None
+            assert elapsed < 2.0, f"Initialize took too long: {elapsed:.2f}s"
+
