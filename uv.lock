@@ -151,7 +151,7 @@ sdist = { url = "https://files.pythonhosted.org/packages/93/09/7d04d7581ae3bb8b5
 
 [[package]]
 name = "chess-mcp-server"
-version = "0.1.4"
+version = "0.1.15b3"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
@@ -171,7 +171,7 @@ dev = [
 requires-dist = [
     { name = "fastapi" },
     { name = "jinja2" },
-    { name = "mcp", extras = ["cli"] },
+    { name = "mcp", extras = ["cli"], specifier = ">=1.2.0,<2.0.0" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "pytest-asyncio", marker = "extra == 'dev'" },
     { name = "python-chess" },
