@@ -125,3 +125,27 @@ def test_minimax_maximizing_uses_side_to_move():
     move = ai.get_move(board, level=10)
     assert move.uci() == "h5f7"
 
+
+def test_create_game_opens_board_in_browser(monkeypatch):
+    import time
+    from src import mcp_server
+
+    GameManager._instance = None
+    opened: list[str] = []
+
+    def capture_open(url: str) -> None:
+        opened.append(url)
+
+    monkeypatch.setattr(mcp_server, "open_browser_stdio_safe", capture_open)
+    monkeypatch.setattr(mcp_server, "get_dashboard_url", lambda: "http://127.0.0.1:8080")
+
+    mcp_server.createGame(type="computer", color="white", difficulty=1)
+
+    deadline = time.time() + 1.0
+    while time.time() < deadline and not opened:
+        time.sleep(0.05)
+
+    assert len(opened) == 1
+    assert opened[0].startswith("http://127.0.0.1:8080/game/")
+    assert "/game/" in opened[0]
+

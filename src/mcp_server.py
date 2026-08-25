@@ -70,6 +70,8 @@ def createGame(
         "difficulty": difficulty
     }
     game = manager.create_game(config)
+    game_url = f"{get_dashboard_url()}/game/{game.id}"
+    _schedule_open_game_in_browser(game_url)
 
     content = []
 
@@ -79,6 +81,7 @@ def createGame(
         f"- Type: {type}\n"
         f"- You are: {color.title()}\n"
         f"- Difficulty: Level {difficulty} (if computer)\n"
+        f"- Board: {game_url}\n"
         f"- Dashboard: {get_dashboard_url()}\n"
     )
 
@@ -292,6 +295,15 @@ def joinGame(
 
 
 # --- Entry Point ---
+
+def _schedule_open_game_in_browser(url: str) -> None:
+    """Open a game board URL in the background without blocking MCP stdio."""
+    threading.Thread(
+        target=open_browser_stdio_safe,
+        args=(url,),
+        daemon=True,
+    ).start()
+
 
 def open_browser_stdio_safe(url: str) -> None:
     """
