@@ -5,7 +5,7 @@ This document defines the tools exposed by the Chess MCP Server.
 ## Data Structures
 
 ```typescript
-type PlayerType = "computer" | "agent";
+type PlayerType = "computer" | "agent" | "human";
 ```
 
 ## Tools
@@ -15,9 +15,8 @@ type PlayerType = "computer" | "agent";
 Initializes a new chess game session.
 
 - **Arguments**:
-  - `type` (string): Play against "computer" (AI) or "agent" (another tool/human).
+  - `type` (string): Play against "computer" (AI), "agent" (another AI agent) or "human" (another human).
   - `color` (string, default "white"): Your color. "white" moves first.
-  - `showUi` (boolean, default false): If true, returns an interactive HTML board.
   - `difficulty` (number, default 5): AI Difficulty Level (1-10), if type is "computer".
 - **Returns**: A list containing text confirmation with Game ID, and optionally the board state/UI resource.
   - If **White**: Returns immediate board state (Text + optional UI). Next action: `finishTurn`.

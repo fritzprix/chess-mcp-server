@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "chess-mcp-server"
-version = "0.1.5"
+version = "0.1.16"
 description = "A Model Context Protocol (MCP) server for playing Chess with AI Agents."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -18,7 +18,7 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "mcp[cli]",
+    "mcp[cli]>=1.2.0,<2.0.0",
     "python-chess",
     "fastapi",
     "uvicorn",
@@ -40,5 +40,15 @@ chess-mcp-server = "src.mcp_server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+
+
+
+
+
 
 

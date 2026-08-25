@@ -1,15 +1,74 @@
 param (
-    [string]$Version = "v0.1.0"
+    [string]$Arg
 )
 
-# Ensure version starts with v
-if (-not $Version.StartsWith("v")) {
-    $Version = "v$Version"
+# Configuration
+$PyProjectFile = "pyproject.toml"
+
+# Functions
+function Get-CurrentVersion {
+    $Content = Get-Content $PyProjectFile -Raw
+    $Match = [regex]::Match($Content, 'version = "(.*)"')
+    if ($Match.Success) {
+        return $Match.Groups[1].Value
+    }
+    return $null
 }
 
-# Update pyproject.toml
-$CleanVersion = $Version -replace "^v", ""
-$PyProjectFile = "pyproject.toml"
+function Bump-Version {
+    param (
+        [string]$Current,
+        [string]$Type  # patch, minor, major
+    )
+    
+    $Parts = $Current -split '\.'
+    [int]$Major = $Parts[0]
+    [int]$Minor = $Parts[1]
+    [int]$Patch = $Parts[2]
+    
+    switch ($Type) {
+        "patch" {
+            $Patch++
+        }
+        "minor" {
+            $Minor++
+            $Patch = 0
+        }
+        "major" {
+            $Major++
+            $Minor = 0
+            $Patch = 0
+        }
+    }
+    
+    return "$Major.$Minor.$Patch"
+}
+
+# --- Main ---
+
+if (-not $Arg) {
+    Write-Host "Usage: .\release.ps1 [patch|minor|major|vX.Y.Z]" -ForegroundColor Red
+    exit 1
+}
+
+$CurrentVersion = Get-CurrentVersion
+$NewVersion = ""
+
+if ($Arg -in @("patch", "minor", "major")) {
+    Write-Host "Bumping version ($Arg) from $CurrentVersion..." -ForegroundColor Cyan
+    $NewVersion = Bump-Version -Current $CurrentVersion -Type $Arg
+} else {
+    $NewVersion = $Arg
+    # Strip leading 'v' if present for pyproject.toml consistency
+    $NewVersion = $NewVersion -replace "^v", ""
+}
+
+$VersionTag = "v$NewVersion"
+
+Write-Host "Target Version: $NewVersion" -ForegroundColor Green
+Write-Host "Target Tag:     $VersionTag" -ForegroundColor Green
+
+# 1. Update pyproject.toml if version changed
 
 if (Test-Path $PyProjectFile) {
     $Content = Get-Content $PyProjectFile -Raw

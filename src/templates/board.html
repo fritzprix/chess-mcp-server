@@ -1,0 +1,1303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chess MCP - Game {{ game_id }}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/gifshot@0.3.2/build/gifshot.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/webm-muxer@5.0.2/build/webm-muxer.js"></script>
+    <style>
+        :root {
+            --bg-color: #121318;
+            --panel-bg: #1e2029;
+            --panel-border: #2e3245;
+            --text-primary: #f0f2f8;
+            --text-secondary: #9ea4b5;
+            --accent-green: #2ecc71;
+            --accent-blue: #3498db;
+            --accent-purple: #9b59b6;
+            --accent-amber: #f39c12;
+            --accent-red: #e74c3c;
+            --square-light: #eeeed2;
+            --square-dark: #769656;
+            --square-selected: rgba(243, 156, 18, 0.75);
+            --square-lastmove: rgba(52, 152, 219, 0.5);
+            --square-check: rgba(231, 76, 60, 0.85);
+            --square-hint: rgba(46, 204, 113, 0.4);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .header-bar {
+            width: 100%;
+            max-width: 1200px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding: 12px 20px;
+            background: var(--panel-bg);
+            border: 1px solid var(--panel-border);
+            border-radius: 12px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .back-link {
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-weight: 500;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            border-radius: 6px;
+            background: rgba(255, 255, 255, 0.05);
+            transition: all 0.2s ease;
+        }
+
+        .back-link:hover {
+            color: var(--text-primary);
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .title {
+            font-size: 1.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #2ecc71, #3498db);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .status-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.85rem;
+            padding: 4px 12px;
+            border-radius: 20px;
+            background: rgba(46, 204, 113, 0.15);
+            color: var(--accent-green);
+            border: 1px solid rgba(46, 204, 113, 0.3);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: var(--accent-green);
+            box-shadow: 0 0 8px var(--accent-green);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.4; transform: scale(0.9); }
+            100% { opacity: 1; transform: scale(1); }
+        }
+
+        .main-container {
+            width: 100%;
+            max-width: 1200px;
+            display: grid;
+            grid-template-columns: minmax(500px, 680px) minmax(320px, 1fr);
+            gap: 25px;
+            align-items: start;
+        }
+
+        @media (max-width: 960px) {
+            .main-container {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .board-card {
+            background: var(--panel-bg);
+            border: 1px solid var(--panel-border);
+            border-radius: 16px;
+            padding: 20px;
+            box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .game-info-strip {
+            width: 100%;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding: 10px 16px;
+            background: rgba(0, 0, 0, 0.25);
+            border-radius: 8px;
+            font-size: 0.95rem;
+        }
+
+        .turn-badge {
+            font-weight: 600;
+            padding: 4px 10px;
+            border-radius: 6px;
+        }
+
+        .turn-white {
+            background: #ffffff;
+            color: #121318;
+        }
+
+        .turn-black {
+            background: #2b2d42;
+            color: #ffffff;
+            border: 1px solid #4a4e69;
+        }
+
+        /* Chess Board Wrapper with Coordinates */
+        .board-wrapper {
+            position: relative;
+            padding: 24px;
+            background: #181a22;
+            border-radius: 12px;
+            box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.6), 0 8px 24px rgba(0,0,0,0.5);
+            margin-bottom: 20px;
+            user-select: none;
+        }
+
+        .board-grid {
+            display: grid;
+            grid-template-columns: repeat(8, 72px);
+            grid-template-rows: repeat(8, 72px);
+            border: 3px solid #2e3245;
+            border-radius: 4px;
+            overflow: hidden;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.6);
+        }
+
+        @media (max-width: 650px) {
+            .board-grid {
+                grid-template-columns: repeat(8, 11vw);
+                grid-template-rows: repeat(8, 11vw);
+            }
+        }
+
+        .square {
+            position: relative;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 52px;
+            cursor: pointer;
+            transition: filter 0.15s ease;
+        }
+
+        .square:hover {
+            filter: brightness(1.15);
+        }
+
+        .square.light {
+            background-color: var(--square-light);
+            color: #2b2b2b;
+        }
+
+        .square.dark {
+            background-color: var(--square-dark);
+            color: #121212;
+        }
+
+        .square.selected {
+            background-color: var(--square-selected) !important;
+        }
+
+        .square.last-move {
+            background-color: var(--square-lastmove) !important;
+        }
+
+        .square.in-check {
+            background-color: var(--square-check) !important;
+            animation: pulse-red 1s infinite alternate;
+        }
+
+        @keyframes pulse-red {
+            from { box-shadow: inset 0 0 10px #e74c3c; }
+            to { box-shadow: inset 0 0 25px #c0392b; }
+        }
+
+        /* Move Hint Dot */
+        .square.legal-target::after {
+            content: '';
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background-color: var(--square-hint);
+            box-shadow: 0 0 8px var(--accent-green);
+            pointer-events: none;
+        }
+
+        .square.legal-target.has-piece::after {
+            width: 100%;
+            height: 100%;
+            border-radius: 0;
+            background: transparent;
+            border: 4px solid var(--square-hint);
+            box-sizing: border-box;
+        }
+
+        /* Board Edge Coordinates */
+        .coord-rank {
+            position: absolute;
+            left: 6px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-around;
+            height: calc(100% - 48px);
+            top: 24px;
+            font-weight: 600;
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+        }
+
+        .coord-file {
+            position: absolute;
+            bottom: 4px;
+            display: flex;
+            justify-content: space-around;
+            width: calc(100% - 48px);
+            left: 24px;
+            font-weight: 600;
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+        }
+
+        .controls-card {
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            background: rgba(0, 0, 0, 0.3);
+            padding: 16px;
+            border-radius: 10px;
+            border: 1px solid var(--panel-border);
+        }
+
+        .input-group {
+            display: flex;
+            gap: 10px;
+        }
+
+        input[type="text"] {
+            flex: 1;
+            padding: 10px 14px;
+            background: #121318;
+            border: 1px solid var(--panel-border);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 1rem;
+        }
+
+        input[type="text"]:focus {
+            outline: none;
+            border-color: var(--accent-blue);
+        }
+
+        .btn {
+            padding: 10px 18px;
+            border: none;
+            border-radius: 8px;
+            font-family: 'Outfit', sans-serif;
+            font-weight: 600;
+            font-size: 0.95rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #2ecc71, #27ae60);
+            color: #fff;
+            box-shadow: 0 4px 12px rgba(46, 204, 113, 0.3);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 6px 16px rgba(46, 204, 113, 0.4);
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.08);
+            color: var(--text-primary);
+            border: 1px solid var(--panel-border);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        .btn-action {
+            background: linear-gradient(135deg, #3498db, #2980b9);
+            color: white;
+        }
+
+        .btn-action:hover {
+            box-shadow: 0 4px 12px rgba(52, 152, 219, 0.4);
+        }
+
+        .checkbox-label {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+            cursor: pointer;
+        }
+
+        /* Sidebar Panels */
+        .sidebar {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .panel-card {
+            background: var(--panel-bg);
+            border: 1px solid var(--panel-border);
+            border-radius: 16px;
+            padding: 20px;
+            box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+        }
+
+        .panel-header {
+            font-size: 1.1rem;
+            font-weight: 700;
+            margin-bottom: 14px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            color: var(--text-primary);
+            border-bottom: 1px solid var(--panel-border);
+            padding-bottom: 10px;
+        }
+
+        /* Play Trace Table */
+        .play-trace-container {
+            max-height: 320px;
+            overflow-y: auto;
+            border-radius: 8px;
+            background: rgba(0, 0, 0, 0.2);
+            border: 1px solid var(--panel-border);
+        }
+
+        .trace-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.9rem;
+        }
+
+        .trace-table th {
+            position: sticky;
+            top: 0;
+            background: #181a22;
+            padding: 8px 12px;
+            text-align: left;
+            color: var(--text-secondary);
+            border-bottom: 1px solid var(--panel-border);
+            font-weight: 600;
+        }
+
+        .trace-table td {
+            padding: 8px 12px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+            cursor: pointer;
+        }
+
+        .trace-table tr:hover {
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .trace-table tr.active-move {
+            background: rgba(52, 152, 219, 0.25);
+            font-weight: 600;
+        }
+
+        /* Captured Pieces Display */
+        .captured-container {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-bottom: 15px;
+            background: rgba(0, 0, 0, 0.2);
+            padding: 10px;
+            border-radius: 8px;
+        }
+
+        .captured-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 1.3rem;
+            min-height: 28px;
+        }
+
+        .captured-label {
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            width: 55px;
+        }
+
+        .captured-pieces {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 2px;
+        }
+
+        /* Replay Navigation Controls */
+        .replay-nav {
+            display: flex;
+            justify-content: space-between;
+            gap: 6px;
+            margin-top: 12px;
+        }
+
+        .replay-nav .btn {
+            flex: 1;
+            padding: 8px 4px;
+            font-size: 0.85rem;
+        }
+
+        .export-actions {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        #statusMsg {
+            min-height: 24px;
+            font-weight: 600;
+            color: var(--accent-amber);
+            font-size: 0.9rem;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+    <header class="header-bar">
+        <div class="header-left">
+            <a href="/" class="back-link">← Dashboard</a>
+            <h1 class="title">Chess MCP Server</h1>
+        </div>
+        <div class="status-pill">
+            <span class="status-dot"></span>
+            <span id="connState">Real-time Connected</span>
+        </div>
+    </header>
+
+    <main class="main-container">
+        <!-- Left Column: Interactive Chess Board -->
+        <section class="board-card">
+            <div class="game-info-strip">
+                <div>Game ID: <strong id="lblGameId">{{ game_id }}</strong></div>
+                <div>Opponent: <span id="lblOpponent" class="turn-badge turn-white" style="background:#2e3245; color:#2ecc71;">
+                    {% if game_type == 'computer' %}🤖 Computer (Level {{ difficulty }})
+                    {% elif game_type == 'agent' %}🤖 AI Agent
+                    {% else %}👤 Human{% endif %}
+                </span></div>
+                <div>You: <strong>{{ user_side }}</strong></div>
+                <div>Turn: <span id="lblTurn" class="turn-badge turn-white">{{ display_turn }}</span></div>
+            </div>
+
+            <!-- Board Wrapper with Coordinates -->
+            <div class="board-wrapper">
+                <div class="coord-rank" id="coordRanks"></div>
+                <div id="board" class="board-grid"></div>
+                <div class="coord-file" id="coordFiles"></div>
+            </div>
+
+            <div class="controls-card">
+                <div class="input-group">
+                    <input type="text" id="uciInput" placeholder="UCI move e.g. e2e4" autocomplete="off">
+                    <button class="btn btn-primary" onclick="submitMove()">Submit Move</button>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="chkClaimWin"> Claim Checkmate/Win
+                    </label>
+                    <span id="previewIndicator" style="font-size:0.85rem; color:var(--accent-amber); display:none;">
+                        👁️ Viewing History (Preview Mode)
+                    </span>
+                </div>
+            </div>
+            <div id="statusMsg" style="margin-top: 10px;"></div>
+        </section>
+
+        <!-- Right Column: Visual Play Trace & Replay Download -->
+        <aside class="sidebar">
+            <!-- Captured Pieces Panel -->
+            <div class="panel-card">
+                <div class="panel-header">
+                    <span>Captured Pieces</span>
+                </div>
+                <div class="captured-container">
+                    <div class="captured-row">
+                        <span class="captured-label">White lost:</span>
+                        <div id="capturedWhite" class="captured-pieces"></div>
+                    </div>
+                    <div class="captured-row">
+                        <span class="captured-label">Black lost:</span>
+                        <div id="capturedBlack" class="captured-pieces"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Visual Play Trace Panel -->
+            <div class="panel-card">
+                <div class="panel-header">
+                    <span>Visual Play Trace</span>
+                    <span id="moveCountBadge" style="font-size:0.8rem; color:var(--text-secondary); font-weight:normal;">0 moves</span>
+                </div>
+                
+                <div class="play-trace-container" id="traceScroll">
+                    <table class="trace-table">
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>White</th>
+                                <th>Black</th>
+                            </tr>
+                        </thead>
+                        <tbody id="traceTableBody">
+                            <tr><td colspan="3" style="text-align:center; color:var(--text-secondary);">No moves played yet</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Replay Navigation Controls -->
+                <div class="replay-nav">
+                    <button class="btn btn-secondary" title="First Move" onclick="navMove(0)">|&lt;</button>
+                    <button class="btn btn-secondary" title="Previous Move" onclick="navStep(-1)">&lt;</button>
+                    <button class="btn btn-secondary" title="Next Move" onclick="navStep(1)">&gt;</button>
+                    <button class="btn btn-secondary" title="Latest Move" onclick="navMove(currentHistory.length)">&gt;|</button>
+                </div>
+            </div>
+
+            <!-- Replay Export & Download Panel -->
+            <div class="panel-card">
+                <div class="panel-header">
+                    <span>Replay Export</span>
+                </div>
+                <div class="export-actions">
+                    <div style="display:flex; flex-direction:column; gap:4px; margin-bottom:4px;">
+                        <label style="font-size:0.85rem; color:var(--text-secondary); font-weight:500;">Move Frame Duration:</label>
+                        <select id="selReplaySpeed" style="padding:8px 12px; border-radius:8px; background:#121318; color:var(--text-primary); border:1px solid var(--panel-border); font-family:'Outfit', sans-serif;">
+                            <option value="5000" selected>5s / move (playback)</option>
+                            <option value="3000">3s / move (playback)</option>
+                            <option value="2000">2s / move (playback)</option>
+                            <option value="1000">1s / move (playback)</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-action" onclick="downloadReplayVideo()">
+                        🎬 Download Replay Video (.webm)
+                    </button>
+                    <button class="btn btn-action" onclick="downloadReplayGif()" style="background: linear-gradient(135deg, #9b59b6, #8e44ad);">
+                        🖼️ Download Animated Replay GIF
+                    </button>
+                    <button class="btn btn-secondary" onclick="downloadPGN()">
+                        📄 Download PGN File
+                    </button>
+                </div>
+            </div>
+        </aside>
+    </main>
+
+    <script>
+        const gameId = "{{ game_id }}";
+        const initialFen = "{{ fen }}";
+        const isWhitePerspective = "{{ is_white_perspective }}" === "True";
+        
+        let currentGameState = null;
+        let currentHistory = [];
+        let viewingStepIndex = -1; // -1 means live state
+        let selectedSq = null;
+        let eventSource = null;
+
+        const pieceMap = {
+            'r': '♜', 'n': '♞', 'b': '♝', 'q': '♛', 'k': '♚', 'p': '♟',
+            'R': '♖', 'N': '♘', 'B': '♗', 'Q': '♕', 'K': '♔', 'P': '♙'
+        };
+
+        // Render Coordinate Labels
+        function renderCoordinates() {
+            const ranksEl = document.getElementById('coordRanks');
+            const filesEl = document.getElementById('coordFiles');
+            ranksEl.innerHTML = '';
+            filesEl.innerHTML = '';
+
+            const ranks = isWhitePerspective ? ['8','7','6','5','4','3','2','1'] : ['1','2','3','4','5','6','7','8'];
+            const files = isWhitePerspective ? ['a','b','c','d','e','f','g','h'] : ['h','g','f','e','d','c','b','a'];
+
+            ranks.forEach(r => {
+                const div = document.createElement('div');
+                div.textContent = r;
+                ranksEl.appendChild(div);
+            });
+
+            files.forEach(f => {
+                const div = document.createElement('div');
+                div.textContent = f;
+                filesEl.appendChild(div);
+            });
+        }
+
+        // Parse FEN into 2D array
+        function parseFen(fenStr) {
+            const rows = fenStr.split(' ')[0].split('/');
+            let grid = [];
+            for (let r = 0; r < 8; r++) {
+                let rowArr = [];
+                const rankStr = rows[r];
+                for (let i = 0; i < rankStr.length; i++) {
+                    const char = rankStr[i];
+                    if (isNaN(char)) {
+                        rowArr.push(char);
+                    } else {
+                        const empties = parseInt(char);
+                        for (let k = 0; k < empties; k++) {
+                            rowArr.push(null);
+                        }
+                    }
+                }
+                grid.push(rowArr);
+            }
+            return grid;
+        }
+
+        // Main Board Render Function
+        function renderBoard(fenStr, lastMoveUci, inCheck) {
+            const boardEl = document.getElementById('board');
+            boardEl.innerHTML = '';
+
+            const grid = parseFen(fenStr);
+
+            const startR = isWhitePerspective ? 0 : 7;
+            const endR = isWhitePerspective ? 8 : -1;
+            const stepR = isWhitePerspective ? 1 : -1;
+
+            const startC = isWhitePerspective ? 0 : 7;
+            const endC = isWhitePerspective ? 8 : -1;
+            const stepC = isWhitePerspective ? 1 : -1;
+
+            let fromSq = null, toSq = null;
+            if (lastMoveUci && lastMoveUci.length >= 4) {
+                fromSq = lastMoveUci.substring(0, 2);
+                toSq = lastMoveUci.substring(2, 4);
+            }
+
+            for (let r = startR; r !== endR; r += stepR) {
+                for (let c = startC; c !== endC; c += stepC) {
+                    createSquare(r, c, grid[r][c], fromSq, toSq, inCheck);
+                }
+            }
+        }
+
+        function createSquare(row, col, pieceChar, fromSq, toSq, inCheck) {
+            const fileChar = String.fromCharCode(97 + col);
+            const rankNum = 8 - row;
+            const sqCoord = fileChar + rankNum;
+
+            const div = document.createElement('div');
+            const isLight = (row + col) % 2 === 0;
+            div.className = 'square ' + (isLight ? 'light' : 'dark');
+
+            div.dataset.row = row;
+            div.dataset.col = col;
+            div.dataset.coord = sqCoord;
+
+            if (pieceChar) {
+                div.textContent = pieceMap[pieceChar] || pieceChar;
+                div.classList.add('has-piece');
+            }
+
+            // Highlights
+            if (selectedSq === sqCoord) {
+                div.classList.add('selected');
+            }
+            if (sqCoord === fromSq || sqCoord === toSq) {
+                div.classList.add('last-move');
+            }
+
+            // King in check highlight
+            if (inCheck && pieceChar && pieceChar.toLowerCase() === 'k') {
+                const turn = currentGameState ? currentGameState.turn : 'White';
+                if ((turn === 'White' && pieceChar === 'K') || (turn === 'Black' && pieceChar === 'k')) {
+                    div.classList.add('in-check');
+                }
+            }
+
+            // Highlight Legal Destinations for Selected Square
+            if (selectedSq && currentGameState && currentGameState.legal_moves) {
+                const isLegal = currentGameState.legal_moves.some(m => m.startsWith(selectedSq) && m.substring(2, 4) === sqCoord);
+                if (isLegal) {
+                    div.classList.add('legal-target');
+                }
+            }
+
+            div.onclick = () => onSquareClick(sqCoord, pieceChar, div);
+            document.getElementById('board').appendChild(div);
+        }
+
+        function resolveMoveUci(from, to) {
+            const prefix = from + to;
+            const legal = (currentGameState && currentGameState.legal_moves) ? currentGameState.legal_moves : [];
+            const candidates = legal.filter(m => m.startsWith(prefix));
+            if (candidates.length === 0) return prefix;
+            if (candidates.length === 1) return candidates[0];
+            const queenPromo = candidates.find(m => m.length === 5 && m[4] === 'q');
+            return queenPromo || candidates[0];
+        }
+
+        function onSquareClick(coord, pieceChar, divElement) {
+            if (viewingStepIndex !== -1) {
+                document.getElementById('statusMsg').innerText = "Click 'Latest Move' (>|) to exit history preview mode before making moves.";
+                return;
+            }
+
+            if (!selectedSq) {
+                if (pieceChar) {
+                    selectedSq = coord;
+                    document.getElementById('statusMsg').innerText = "Selected square " + coord + ". Click destination.";
+                    refreshBoardView();
+                }
+            } else {
+                if (selectedSq === coord) {
+                    selectedSq = null;
+                    document.getElementById('statusMsg').innerText = "";
+                    refreshBoardView();
+                } else {
+                    const moveCandidate = resolveMoveUci(selectedSq, coord);
+                    document.getElementById('uciInput').value = moveCandidate;
+                    selectedSq = null;
+                    document.getElementById('statusMsg').innerText = "Ready to submit: " + moveCandidate;
+                    refreshBoardView();
+                }
+            }
+        }
+
+        function refreshBoardView() {
+            if (!currentGameState) return;
+            
+            let fenToRender = currentGameState.fen;
+            let lastMoveUci = currentGameState.last_move ? currentGameState.last_move.uci : null;
+            let inCheck = currentGameState.in_check;
+
+            if (viewingStepIndex !== -1 && currentHistory[viewingStepIndex - 1]) {
+                const step = currentHistory[viewingStepIndex - 1];
+                fenToRender = step.fen;
+                lastMoveUci = step.uci;
+                inCheck = false;
+                document.getElementById('previewIndicator').style.display = 'inline';
+            } else {
+                document.getElementById('previewIndicator').style.display = 'none';
+            }
+
+            renderBoard(fenToRender, lastMoveUci, inCheck);
+            renderPlayTrace();
+            renderCapturedPieces();
+        }
+
+        function renderPlayTrace() {
+            const body = document.getElementById('traceTableBody');
+            const history = currentGameState ? currentGameState.move_history : [];
+            currentHistory = history;
+            document.getElementById('moveCountBadge').innerText = history.length + " moves";
+
+            if (!history || history.length === 0) {
+                body.innerHTML = '<tr><td colspan="3" style="text-align:center; color:var(--text-secondary);">No moves played yet</td></tr>';
+                return;
+            }
+
+            let html = '';
+            let movePairMap = {};
+
+            history.forEach((h, idx) => {
+                const moveNum = Math.floor(idx / 2) + 1;
+                if (!movePairMap[moveNum]) {
+                    movePairMap[moveNum] = { white: '', black: '', whiteIdx: -1, blackIdx: -1 };
+                }
+                if (idx % 2 === 0) {
+                    movePairMap[moveNum].white = h.san;
+                    movePairMap[moveNum].whiteIdx = idx + 1;
+                } else {
+                    movePairMap[moveNum].black = h.san;
+                    movePairMap[moveNum].blackIdx = idx + 1;
+                }
+            });
+
+            Object.keys(movePairMap).forEach(num => {
+                const pair = movePairMap[num];
+                const isWhiteActive = viewingStepIndex === pair.whiteIdx;
+                const isBlackActive = viewingStepIndex === pair.blackIdx;
+
+                html += `<tr>
+                    <td style="color:var(--text-secondary); width:35px;">${num}.</td>
+                    <td class="${isWhiteActive ? 'active-move' : ''}" onclick="navMove(${pair.whiteIdx})">${pair.white}</td>
+                    <td class="${isBlackActive ? 'active-move' : ''}" onclick="navMove(${pair.blackIdx})">${pair.black}</td>
+                </tr>`;
+            });
+
+            body.innerHTML = html;
+            
+            // Auto scroll trace container
+            const traceScroll = document.getElementById('traceScroll');
+            traceScroll.scrollTop = traceScroll.scrollHeight;
+        }
+
+        function renderCapturedPieces() {
+            if (!currentGameState) return;
+            const capturedWhiteEl = document.getElementById('capturedWhite');
+            const capturedBlackEl = document.getElementById('capturedBlack');
+
+            const whitePieces = currentGameState.captured_white || [];
+            const blackPieces = currentGameState.captured_black || [];
+
+            capturedWhiteEl.innerHTML = whitePieces.map(p => pieceMap[p] || p).join(' ');
+            capturedBlackEl.innerHTML = blackPieces.map(p => pieceMap[p] || p).join(' ');
+        }
+
+        // Navigation in History
+        function navMove(stepIndex) {
+            if (stepIndex <= 0) {
+                viewingStepIndex = 0;
+            } else if (stepIndex >= currentHistory.length) {
+                viewingStepIndex = -1; // Live state
+            } else {
+                viewingStepIndex = stepIndex;
+            }
+            refreshBoardView();
+        }
+
+        function navStep(direction) {
+            let current = viewingStepIndex === -1 ? currentHistory.length : viewingStepIndex;
+            navMove(current + direction);
+        }
+
+        // Submit Move Handler
+        async function submitMove() {
+            const moveInput = document.getElementById('uciInput');
+            const move = moveInput.value.trim();
+            if (!move) {
+                alert("Please select or enter a move in UCI format (e.g. e2e4)");
+                return;
+            }
+
+            const claimWin = document.getElementById('chkClaimWin').checked;
+            document.getElementById('statusMsg').innerText = "Submitting move " + move + "...";
+
+            // If embedded in MCP Host
+            if (window.parent && window.parent !== window) {
+                window.parent.postMessage({
+                    type: 'tool',
+                    payload: {
+                        toolName: 'finishTurn',
+                        params: { game_id: gameId, move: move, claim_win: claimWin }
+                    }
+                }, '*');
+            }
+
+            // HTTP Fallback to API
+            try {
+                const resp = await fetch(`/api/game/${gameId}/move`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ move: move, claim_win: claimWin })
+                });
+                const resData = await resp.json();
+                if (resp.ok) {
+                    document.getElementById('statusMsg').innerText = "Move accepted!";
+                    moveInput.value = "";
+                    viewingStepIndex = -1;
+                    updateState(resData.state);
+                } else {
+                    document.getElementById('statusMsg').innerText = "Error: " + (resData.detail || "Invalid move");
+                }
+            } catch (err) {
+                console.error("HTTP Move submit error:", err);
+            }
+        }
+
+        function updateState(newState) {
+            currentGameState = newState;
+            document.getElementById('lblTurn').innerText = newState.turn;
+            document.getElementById('lblTurn').className = 'turn-badge ' + (newState.turn === 'White' ? 'turn-white' : 'turn-black');
+
+            const cfg = newState.config || {};
+            const gType = cfg.type || 'computer';
+            const diff = cfg.difficulty || 5;
+            const oppEl = document.getElementById('lblOpponent');
+            if (oppEl) {
+                if (gType === 'computer') oppEl.innerText = `🤖 Computer (Level ${diff})`;
+                else if (gType === 'agent') oppEl.innerText = `🤖 AI Agent`;
+                else oppEl.innerText = `👤 Human`;
+            }
+
+            if (newState.is_game_over) {
+                document.getElementById('statusMsg').innerText = "🏆 Game Over: " + newState.result;
+            }
+
+            refreshBoardView();
+        }
+
+        // Real-Time EventSource (SSE) Setup
+        function initSSE() {
+            if (eventSource) eventSource.close();
+            
+            eventSource = new EventSource(`/api/game/${gameId}/events`);
+            const connEl = document.getElementById('connState');
+
+            eventSource.onopen = () => {
+                connEl.innerText = "Real-time Connected";
+                connEl.parentElement.style.color = "var(--accent-green)";
+            };
+
+            eventSource.onmessage = (e) => {
+                try {
+                    const data = JSON.parse(e.data);
+                    updateState(data);
+                } catch (err) {
+                    console.error("Error parsing SSE event:", err);
+                }
+            };
+
+            eventSource.onerror = (err) => {
+                connEl.innerText = "Reconnecting...";
+                connEl.parentElement.style.color = "var(--accent-amber)";
+            };
+        }
+
+        function fetchGameState() {
+            fetch(`/api/game/${gameId}/state`)
+                .then(res => res.json())
+                .then(data => updateState(data))
+                .catch(err => {
+                    console.error("Error fetching game state:", err);
+                    if (!currentGameState) {
+                        renderBoard(initialFen, null, false);
+                    }
+                });
+        }
+
+        window.addEventListener('DOMContentLoaded', () => {
+            renderCoordinates();
+            fetchGameState();
+            initSSE();
+            setInterval(fetchGameState, 2000);
+        });
+
+        // PGN Download
+        function downloadPGN() {
+            window.location.href = `/api/game/${gameId}/pgn`;
+        }
+
+        // Draw Move Frame Header and Board to HTML5 Canvas for Export
+        function drawReplayFrameToCanvas(ctx, fenStr, width, height, moveInfo, bannerTitle, stepIndex, totalSteps) {
+            const headerHeight = 70;
+            const boardSize = width;
+
+            // Background Fill
+            ctx.fillStyle = "#121318";
+            ctx.fillRect(0, 0, width, height);
+
+            // Header Banner Fill
+            ctx.fillStyle = "#1e2029";
+            ctx.fillRect(0, 0, width, headerHeight);
+
+            // Banner Title
+            ctx.font = "bold 18px Outfit, sans-serif";
+            ctx.fillStyle = "#2ecc71";
+            ctx.textAlign = "left";
+            ctx.textBaseline = "middle";
+            ctx.fillText(bannerTitle, 16, headerHeight / 2);
+
+            // Step Counter
+            ctx.font = "600 13px 'JetBrains Mono', monospace";
+            ctx.fillStyle = "#9ea4b5";
+            ctx.textAlign = "right";
+            ctx.fillText(`Step ${stepIndex} / ${totalSteps - 1}`, width - 16, headerHeight / 2);
+
+            // Draw Board Grid
+            const sqSize = boardSize / 8;
+            const grid = parseFen(fenStr);
+            const lastFrom = moveInfo ? moveInfo.uci.substring(0, 2) : null;
+            const lastTo = moveInfo ? moveInfo.uci.substring(2, 4) : null;
+
+            for (let r = 0; r < 8; r++) {
+                for (let c = 0; c < 8; c++) {
+                    const fileChar = String.fromCharCode(97 + c);
+                    const rankNum = 8 - r;
+                    const sqCoord = fileChar + rankNum;
+
+                    const isLight = (r + c) % 2 === 0;
+                    ctx.fillStyle = isLight ? "#eeeed2" : "#769656";
+
+                    if (sqCoord === lastFrom || sqCoord === lastTo) {
+                        ctx.fillStyle = "rgba(52, 152, 219, 0.75)";
+                    }
+
+                    const x = c * sqSize;
+                    const y = headerHeight + (r * sqSize);
+                    ctx.fillRect(x, y, sqSize, sqSize);
+
+                    const p = grid[r][c];
+                    if (p) {
+                        ctx.font = `${sqSize * 0.72}px sans-serif`;
+                        ctx.textAlign = 'center';
+                        ctx.textBaseline = 'middle';
+                        ctx.fillStyle = p === p.toUpperCase() ? '#ffffff' : '#000000';
+                        ctx.shadowColor = 'rgba(0,0,0,0.6)';
+                        ctx.shadowBlur = 4;
+                        ctx.fillText(pieceMap[p] || p, x + (sqSize * 0.5), y + (sqSize * 0.55));
+                        ctx.shadowBlur = 0;
+                    }
+                }
+            }
+        }
+
+        // Same frame pipeline as GIF. WebM = offline WebCodecs encode (no realtime wait).
+        function getReplayFrameSpecs() {
+            return [
+                { fen: initialFen, moveInfo: null, title: "Start Position" },
+                ...currentHistory.map(h => ({
+                    fen: h.fen,
+                    moveInfo: h,
+                    title: `Move ${h.move_number}: ${h.turn} played ${h.san}`
+                }))
+            ];
+        }
+
+        function buildReplayFrameImages(width, height) {
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            const frames = getReplayFrameSpecs();
+            const frameImages = [];
+            for (let i = 0; i < frames.length; i++) {
+                const f = frames[i];
+                drawReplayFrameToCanvas(ctx, f.fen, width, height, f.moveInfo, f.title, i, frames.length);
+                frameImages.push(canvas.toDataURL('image/png'));
+            }
+            return frameImages;
+        }
+
+        function createReplayGifDataUrl(frameImages, delaySec, width, height) {
+            return new Promise((resolve, reject) => {
+                if (typeof gifshot === 'undefined') {
+                    reject(new Error('gifshot failed to load'));
+                    return;
+                }
+                gifshot.createGIF({
+                    images: frameImages,
+                    interval: delaySec,
+                    gifWidth: width,
+                    gifHeight: height,
+                    numFrames: frameImages.length
+                }, function (obj) {
+                    if (obj.error || !obj.image) {
+                        reject(new Error(obj.error || 'GIF generation failed'));
+                        return;
+                    }
+                    resolve(obj.image);
+                });
+            });
+        }
+
+        function triggerDownload(hrefOrUrl, filename) {
+            const a = document.createElement('a');
+            a.href = hrefOrUrl;
+            a.download = filename;
+            a.click();
+        }
+
+        async function pickWebCodecsVideoConfig(width, height) {
+            if (!window.VideoEncoder || !window.VideoFrame) return null;
+            const candidates = [
+                { codec: 'vp09.00.10.08', muxCodec: 'V_VP9' },
+                { codec: 'vp8', muxCodec: 'V_VP8' }
+            ];
+            for (const c of candidates) {
+                const config = {
+                    codec: c.codec,
+                    width,
+                    height,
+                    bitrate: 2_500_000,
+                    framerate: 30
+                };
+                try {
+                    if (VideoEncoder.isConfigSupported) {
+                        const { supported } = await VideoEncoder.isConfigSupported(config);
+                        if (!supported) continue;
+                    }
+                    return { ...c, config };
+                } catch (_) {
+                    // try next codec
+                }
+            }
+            return null;
+        }
+
+        async function encodeReplayWebmOffline(frames, delayMs, width, height) {
+            const muxerApi = window.WebMMuxer;
+            if (!muxerApi || !muxerApi.Muxer || !muxerApi.ArrayBufferTarget) {
+                throw new Error('webm-muxer failed to load');
+            }
+            const picked = await pickWebCodecsVideoConfig(width, height);
+            if (!picked) {
+                throw new Error('WebCodecs VideoEncoder is not available in this browser');
+            }
+
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d', { alpha: false, willReadFrequently: true });
+
+            const target = new muxerApi.ArrayBufferTarget();
+            const muxer = new muxerApi.Muxer({
+                target,
+                video: { codec: picked.muxCodec, width, height },
+                firstTimestampBehavior: 'offset'
+            });
+
+            let encodeError = null;
+            const encoder = new VideoEncoder({
+                output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+                error: (e) => { encodeError = e; }
+            });
+            encoder.configure(picked.config);
+
+            const durationUs = Math.max(1, delayMs) * 1000;
+            let timestampUs = 0;
+
+            for (let i = 0; i < frames.length; i++) {
+                if (encodeError) throw encodeError;
+                const f = frames[i];
+                drawReplayFrameToCanvas(ctx, f.fen, width, height, f.moveInfo, f.title, i, frames.length);
+                const frame = new VideoFrame(canvas, {
+                    timestamp: timestampUs,
+                    duration: durationUs
+                });
+                encoder.encode(frame, { keyFrame: i === 0 || (i % 12) === 0 });
+                frame.close();
+                timestampUs += durationUs;
+
+                if (i === 0 || i === frames.length - 1 || (i % 5) === 0) {
+                    document.getElementById('statusMsg').innerText =
+                        `🎬 Encoding WebM ${i + 1}/${frames.length}...`;
+                    await new Promise(r => setTimeout(r, 0));
+                }
+            }
+
+            // Muxers often treat duration as last timestamp; add a 1ms tail so the
+            // final position keeps its full playback delay.
+            if (!encodeError) {
+                const tail = new VideoFrame(canvas, { timestamp: timestampUs, duration: 1000 });
+                encoder.encode(tail, { keyFrame: false });
+                tail.close();
+            }
+
+            await encoder.flush();
+            if (encodeError) throw encodeError;
+            encoder.close();
+            muxer.finalize();
+
+            const blob = new Blob([target.buffer], { type: 'video/webm' });
+            if (blob.size < 256) {
+                throw new Error(`Recording produced an empty video (${blob.size} bytes).`);
+            }
+            return blob;
+        }
+
+        async function downloadReplayVideo() {
+            if (!currentHistory || currentHistory.length === 0) {
+                alert("No moves recorded in this game yet!");
+                return;
+            }
+
+            const delayMs = parseInt(document.getElementById('selReplaySpeed').value) || 5000;
+            const frames = getReplayFrameSpecs();
+            const width = 480;
+            const height = 550;
+
+            document.getElementById('statusMsg').innerText =
+                `🎬 Encoding WebM (${frames.length} frames, ${delayMs / 1000}s/move when played)...`;
+
+            try {
+                const blob = await encodeReplayWebmOffline(frames, delayMs, width, height);
+                const url = URL.createObjectURL(blob);
+                triggerDownload(url, `chess_replay_${gameId}.webm`);
+                setTimeout(() => URL.revokeObjectURL(url), 10_000);
+                document.getElementById('statusMsg').innerText = "✅ Replay video downloaded successfully!";
+            } catch (err) {
+                console.error('WebM export failed:', err);
+                document.getElementById('statusMsg').innerText = "❌ WebM export failed. Try GIF instead.";
+                alert("WebM export failed: " + (err && err.message ? err.message : String(err)) +
+                    "\n\nUse GIF download instead (Chrome/Edge recommended for WebM).");
+            }
+        }
+
+        // Animated GIF Generator
+        async function downloadReplayGif() {
+            if (!currentHistory || currentHistory.length === 0) {
+                alert("No moves recorded in this game yet!");
+                return;
+            }
+
+            const delayMs = parseInt(document.getElementById('selReplaySpeed').value) || 5000;
+            const delaySec = delayMs / 1000;
+            const width = 480;
+            const height = 550;
+            document.getElementById('statusMsg').innerText =
+                `🖼️ Generating Animated GIF (${delaySec}s per move)... Please wait.`;
+
+            try {
+                const frameImages = buildReplayFrameImages(width, height);
+                const gifDataUrl = await createReplayGifDataUrl(frameImages, delaySec, width, height);
+                triggerDownload(gifDataUrl, `chess_replay_${gameId}.gif`);
+                document.getElementById('statusMsg').innerText = "✅ Animated GIF downloaded successfully!";
+            } catch (err) {
+                console.error('GIF export failed:', err);
+                const frameImages = buildReplayFrameImages(width, height);
+                triggerDownload(frameImages[frameImages.length - 1], `chess_game_${gameId}_snapshot.png`);
+                document.getElementById('statusMsg').innerText = "✅ Game snapshot image downloaded!";
+            }
+        }
+    </script>
+</body>
+</html>

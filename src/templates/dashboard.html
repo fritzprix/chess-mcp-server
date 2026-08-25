@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chess MCP - Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #121318;
+            --panel-bg: #1e2029;
+            --panel-border: #2e3245;
+            --text-primary: #f0f2f8;
+            --text-secondary: #9ea4b5;
+            --accent-green: #2ecc71;
+            --accent-blue: #3498db;
+            --accent-purple: #9b59b6;
+            --accent-amber: #f39c12;
+            --accent-red: #e74c3c;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 30px 20px;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 1100px;
+        }
+
+        .header-card {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 24px 30px;
+            background: var(--panel-bg);
+            border: 1px solid var(--panel-border);
+            border-radius: 16px;
+            margin-bottom: 25px;
+            box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+        }
+
+        .header-title h1 {
+            font-size: 1.8rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #2ecc71, #3498db);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .header-title p {
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+            margin-top: 4px;
+        }
+
+        .live-tag {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 14px;
+            border-radius: 20px;
+            background: rgba(46, 204, 113, 0.15);
+            color: var(--accent-green);
+            border: 1px solid rgba(46, 204, 113, 0.3);
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+
+        .live-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: var(--accent-green);
+            box-shadow: 0 0 8px var(--accent-green);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.4; transform: scale(0.9); }
+            100% { opacity: 1; transform: scale(1); }
+        }
+
+        .filter-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .filter-buttons {
+            display: flex;
+            gap: 10px;
+        }
+
+        .filter-btn {
+            padding: 8px 16px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--panel-border);
+            border-radius: 8px;
+            color: var(--text-secondary);
+            font-family: 'Outfit', sans-serif;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .filter-btn:hover, .filter-btn.active {
+            background: var(--accent-blue);
+            color: white;
+            border-color: var(--accent-blue);
+        }
+
+        .table-card {
+            background: var(--panel-bg);
+            border: 1px solid var(--panel-border);
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: left;
+        }
+
+        th {
+            background: #181a22;
+            padding: 16px 20px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border-bottom: 1px solid var(--panel-border);
+        }
+
+        td {
+            padding: 16px 20px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+            font-size: 0.95rem;
+        }
+
+        tr:hover {
+            background: rgba(255, 255, 255, 0.03);
+        }
+
+        .game-id-link {
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 600;
+            color: var(--accent-blue);
+            text-decoration: none;
+            padding: 4px 8px;
+            background: rgba(52, 152, 219, 0.1);
+            border-radius: 6px;
+            transition: all 0.2s ease;
+        }
+
+        .game-id-link:hover {
+            background: rgba(52, 152, 219, 0.25);
+            color: #fff;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+
+        .badge-computer { background: rgba(155, 89, 182, 0.2); color: var(--accent-purple); border: 1px solid rgba(155, 89, 182, 0.4); }
+        .badge-human { background: rgba(46, 204, 113, 0.2); color: var(--accent-green); border: 1px solid rgba(46, 204, 113, 0.4); }
+        .badge-agent { background: rgba(52, 152, 219, 0.2); color: var(--accent-blue); border: 1px solid rgba(52, 152, 219, 0.4); }
+
+        .btn-copy {
+            padding: 6px 12px;
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid var(--panel-border);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-family: 'Outfit', sans-serif;
+            font-size: 0.85rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .btn-copy:hover {
+            background: var(--accent-blue);
+            border-color: var(--accent-blue);
+            color: white;
+        }
+
+        .fen-text {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            max-width: 260px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .empty-state {
+            padding: 40px;
+            text-align: center;
+            color: var(--text-secondary);
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <header class="header-card">
+            <div class="header-title">
+                <h1>Active Chess Games Dashboard</h1>
+                <p>Chess MCP Server v{{ version }} • Real-time Session Manager</p>
+            </div>
+            <div class="live-tag">
+                <span class="live-dot"></span>
+                <span>SSE Real-time Active</span>
+            </div>
+        </header>
+
+        <div class="filter-bar">
+            <div class="filter-buttons">
+                <button class="filter-btn active" data-filter="active" onclick="setFilter('active')">Active Games</button>
+                <button class="filter-btn" data-filter="all" onclick="setFilter('all')">All Games</button>
+                <button class="filter-btn" data-filter="computer" onclick="setFilter('computer')">vs Computer</button>
+                <button class="filter-btn" data-filter="agent" onclick="setFilter('agent')">vs Agent</button>
+                <button class="filter-btn" data-filter="human" onclick="setFilter('human')">vs Human</button>
+            </div>
+            <div style="display:flex; align-items:center; gap:12px;">
+                <div style="font-size: 0.9rem; color: var(--text-secondary);">
+                    Total: <strong id="gameCount">0</strong>
+                </div>
+                <button class="btn-copy" onclick="clearGames()" style="background:#e74c3c; color:#fff; border:none; padding:6px 12px; border-radius:6px; font-weight:600; cursor:pointer;">
+                    🗑️ Clear Games
+                </button>
+            </div>
+        </div>
+
+        <div class="table-card">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Game ID</th>
+                        <th>Type</th>
+                        <th>Turn</th>
+                        <th>Moves</th>
+                        <th>FEN State</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody id="gameTableBody">
+                    <tr>
+                        <td colspan="6" class="empty-state">Loading active games...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        let allGames = {{ games | tojson }};
+        let currentFilter = 'active';
+
+        function copyJoin(gameId) {
+            const text = "Please join game " + gameId;
+            navigator.clipboard.writeText(text).then(() => {
+                alert("Copied to clipboard: " + text);
+            }).catch(err => {
+                prompt("Copy this text:", text);
+            });
+        }
+
+        function clearGames() {
+            if (confirm("Are you sure you want to clear all test games from history?")) {
+                fetch('/api/dashboard/clear', { method: 'POST' })
+                    .then(res => res.json())
+                    .then(data => {
+                        allGames = [];
+                        renderTable();
+                    })
+                    .catch(err => console.error("Error clearing games:", err));
+            }
+        }
+
+        function setFilter(filterType) {
+            currentFilter = filterType;
+            document.querySelectorAll('.filter-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.getAttribute('data-filter') === filterType);
+            });
+            renderTable();
+        }
+
+        function renderTable() {
+            const tbody = document.getElementById('gameTableBody');
+            let filtered = allGames;
+            if (currentFilter === 'active') filtered = allGames.filter(g => !g.is_game_over);
+            if (currentFilter === 'computer') filtered = allGames.filter(g => g.type === 'computer');
+            if (currentFilter === 'human') filtered = allGames.filter(g => g.type === 'human');
+            if (currentFilter === 'agent') filtered = allGames.filter(g => g.type === 'agent');
+
+            document.getElementById('gameCount').innerText = filtered.length;
+
+            if (filtered.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No active games matching filter</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = filtered.map(g => {
+                let badgeClass = 'badge-agent';
+                let typeLabel = g.type;
+                if (g.type === 'computer') {
+                    badgeClass = 'badge-computer';
+                    typeLabel = `computer (Lvl ${g.difficulty || 5})`;
+                }
+                if (g.type === 'human') badgeClass = 'badge-human';
+
+                return `<tr>
+                    <td><a class="game-id-link" href="/game/${g.id}">${g.id}</a></td>
+                    <td><span class="badge ${badgeClass}">${typeLabel}</span></td>
+                    <td><strong>${g.turn}</strong></td>
+                    <td>${g.move_count || 0}</td>
+                    <td><div class="fen-text" title="${g.fen}">${g.fen}</div></td>
+                    <td>
+                        <a href="/game/${g.id}" class="btn-copy" style="text-decoration:none; margin-right:6px;">View Board</a>
+                        <button class="btn-copy" onclick="copyJoin('${g.id}')">Copy Join Prompt</button>
+                    </td>
+                </tr>`;
+            }).join('');
+        }
+
+        function fetchGames() {
+            fetch('/api/dashboard/games')
+                .then(res => res.json())
+                .then(data => {
+                    if (Array.isArray(data)) {
+                        allGames = data;
+                        renderTable();
+                    }
+                })
+                .catch(err => console.error("Error fetching games:", err));
+        }
+
+        function initDashboardSSE() {
+            const eventSource = new EventSource('/api/dashboard/events');
+            eventSource.onmessage = (e) => {
+                try {
+                    const data = JSON.parse(e.data);
+                    if (data.games) {
+                        allGames = data.games;
+                        renderTable();
+                    }
+                } catch (err) {
+                    console.error("Dashboard SSE parse error:", err);
+                }
+            };
+        }
+
+        window.addEventListener('DOMContentLoaded', () => {
+            renderTable();
+            fetchGames();
+            initDashboardSSE();
+            setInterval(fetchGames, 3000);
+        });
+    </script>
+</body>
+</html>
