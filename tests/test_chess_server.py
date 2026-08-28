@@ -69,6 +69,19 @@ def test_engine_level_1():
     move = ai.get_move(board, level=1)
     assert move in board.legal_moves
 
+
+def test_engine_difficulty_errors_do_not_increase_with_level():
+    ai = ChessAI()
+    error_rates = [ai.levels[level]["error_rate"] for level in range(1, 11)]
+    assert error_rates == sorted(error_rates, reverse=True)
+
+
+def test_engine_stops_on_custom_lone_king_loss():
+    ai = ChessAI()
+    board = chess.Board("7k/8/8/8/8/8/8/K6q w - - 0 1")
+    assert ai.get_move(board, level=10) is None
+
+
 def test_rendering_content():
     md = render_board_to_markdown(chess.Board().fen(), player_color="White")
     assert "**Turn**: White to move" in md
