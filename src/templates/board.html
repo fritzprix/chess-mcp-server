@@ -1250,13 +1250,13 @@
                 }
             }
 
-            // Muxers often treat duration as last timestamp; add a 1ms tail so the
-            // final position keeps its full playback delay.
+            // Add a duplicate keyframe so muxers and players keep the final
+            // position visible for a complete playback interval.
             if (!encodeError) {
                 const tail = await createReplayVideoFrame(
-                    canvas, timestampUs, 1000, width, height
+                    canvas, timestampUs, durationUs, width, height
                 );
-                encoder.encode(tail, { keyFrame: false });
+                encoder.encode(tail, { keyFrame: true });
                 tail.close();
             }
 

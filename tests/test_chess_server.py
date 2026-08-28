@@ -76,6 +76,14 @@ def test_engine_difficulty_errors_do_not_increase_with_level():
     assert error_rates == sorted(error_rates, reverse=True)
 
 
+def test_engine_top_n_sampling_decreases_with_level():
+    ai = ChessAI()
+    top_n_values = [ai.levels[level]["top_n"] for level in range(1, 11)]
+    assert top_n_values == sorted(top_n_values, reverse=True)
+    assert ai.levels[5]["top_n"] == 3
+    assert ai.levels[10]["top_n"] == 2
+
+
 def test_engine_stops_on_custom_lone_king_loss():
     ai = ChessAI()
     board = chess.Board("7k/8/8/8/8/8/8/K6q w - - 0 1")

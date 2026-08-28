@@ -19,16 +19,16 @@ class ChessAI:
 
     def __init__(self):
         self.levels = {
-            1: {"depth": 1, "error_rate": 0.60},
-            2: {"depth": 1, "error_rate": 0.40},
-            3: {"depth": 1, "error_rate": 0.20},
-            4: {"depth": 2, "error_rate": 0.15},
-            5: {"depth": 2, "error_rate": 0.10},
-            6: {"depth": 3, "error_rate": 0.08},
-            7: {"depth": 3, "error_rate": 0.04},
-            8: {"depth": 3, "error_rate": 0.00},
-            9: {"depth": 4, "error_rate": 0.00},
-            10: {"depth": 4, "error_rate": 0.00},
+            1: {"depth": 1, "error_rate": 0.60, "top_n": 5},
+            2: {"depth": 1, "error_rate": 0.40, "top_n": 4},
+            3: {"depth": 1, "error_rate": 0.20, "top_n": 3},
+            4: {"depth": 2, "error_rate": 0.15, "top_n": 3},
+            5: {"depth": 2, "error_rate": 0.10, "top_n": 3},
+            6: {"depth": 3, "error_rate": 0.08, "top_n": 3},
+            7: {"depth": 3, "error_rate": 0.04, "top_n": 2},
+            8: {"depth": 3, "error_rate": 0.00, "top_n": 2},
+            9: {"depth": 4, "error_rate": 0.00, "top_n": 2},
+            10: {"depth": 4, "error_rate": 0.00, "top_n": 2},
         }
         self.piece_values = {
             chess.PAWN: 100,
@@ -53,7 +53,9 @@ class ChessAI:
             return random.choice(legal_moves)
 
         self._transposition_table.clear()
-        return self._get_best_move_minimax(board, settings["depth"])
+        return self._get_best_move_minimax(
+            board, settings["depth"], settings["top_n"]
+        )
 
     @staticmethod
     def _lone_king_loser(board: chess.Board) -> Optional[chess.Color]:
@@ -279,27 +281,41 @@ class ChessAI:
         self,
         board: chess.Board,
         depth: int,
+        top_n: int = 1,
     ) -> Optional[chess.Move]:
         legal_moves = self._order_moves(board, list(board.legal_moves))
         if not legal_moves:
             return None
 
         maximizing = board.turn == chess.WHITE
-        best_move = legal_moves[0]
-        best_value = -math.inf if maximizing else math.inf
-        alpha = -math.inf
-        beta = math.inf
+        scored_moves: List[Tuple[int, chess.Move]] = []
 
         for move in legal_moves:
             board.push(move)
+            # A full window keeps the ranking exact for top-N sampling.
             value = self._minimax(
-                board, depth - 1, alpha, beta, board.turn == chess.WHITE, ply=1
+                board,
+                depth - 1,
+                -math.inf,
+                math.inf,
+                board.turn == chess.WHITE,
+                ply=1,
             )
             board.pop()
-            if (maximizing and value > best_value) or (not maximizing and value < best_value):
-                best_value, best_move = value, move
-            if maximizing:
-                alpha = max(alpha, best_value)
-            else:
-                beta = min(beta, best_value)
-        return best_move
+            scored_moves.append((value, move))
+
+        scored_moves.sort(key=lambda item: item[0], reverse=maximizing)
+        best_score = scored_moves[0][0]
+        score_window = 150
+        if maximizing:
+            candidates = [
+                move for score, move in scored_moves
+                if score >= best_score - score_window
+            ]
+        else:
+            candidates = [
+                move for score, move in scored_moves
+                if score <= best_score + score_window
+            ]
+        candidate_count = max(1, min(top_n, len(candidates)))
+        return random.choice(candidates[:candidate_count])
