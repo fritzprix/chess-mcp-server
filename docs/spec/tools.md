@@ -19,14 +19,13 @@ Initializes a new chess game session.
   - `color` (string, default "white"): Your color. "white" moves first.
   - `difficulty` (number, default 5): AI Difficulty Level (1-10), if type is "computer".
 - **Returns**: A list containing text confirmation with Game ID, and optionally the board state/UI resource.
-  - The response includes a private **Player token**. It must be supplied to `finishTurn`.
   - If **White**: Returns immediate board state (Text + optional UI). Next action: `finishTurn`.
   - If **Black**: Returns confirmation. Next action: `waitForNextTurn`.
 
 **Example Response (White)**:
 ```json
 [
-  "Game Created Successfully!\n- Game ID: 1234\n- Type: computer\n- You are: White\n- Player token: <private-token>\n\n| ... (Board ASCII) ... |\n\n**Next Action**: Decide your move and call `finishTurn(game_id, move, player_token)`.",
+  "Game Created Successfully!\n- Game ID: 1234\n- Type: computer\n- You are: White\n\n| ... (Board ASCII) ... |\n\n**Next Action**: Decide your move and call `finishTurn(game_id, move)`.",
   { "type": "resource", "resource": { "uri": "ui://chess/1234", ... } }
 ]
 ```
@@ -38,7 +37,6 @@ This tool implements a "Long Polling" mechanism to keep the Client/Agent synchro
 
 - **Arguments**:
   - `game_id` (string): The ID of the active game.
-  - `player_token` (string): The private token returned by `createGame` or `joinGame`.
 - **Behavior**:
   - **Blocking**: The tool call will BLOCK for up to **30 seconds**.
   - **Return Condition 1 (Activity)**: If the opponent completes their move within the window, the tool returns immediately with the new board state.
@@ -70,7 +68,6 @@ Submits a move to the game server. This tool is capable of handling moves from A
   - `game_id` (string): The ID of the active game.
   - `move` (string): The move in UCI format (e.g., "e2e4", "a7a8q").
   - `claim_win` (boolean, optional): **[NEW]** Set to `true` to explicit claim a Checkmate/Win with this move.
-  - `player_token` (string): The private token returned by `createGame` or `joinGame`.
 - **Validation Actions**:
   1.  **Existence**: Checks if `game_id` exists.
   2.  **Turn Order**: Checks if it is currently the turn of the entity attempting to move.
@@ -84,6 +81,11 @@ Submits a move to the game server. This tool is capable of handling moves from A
   - **Error - Invalid Move**: "Invalid move: [Reason]"
   - **Error - Failed Claim**: "Move rejected: You claimed Checkmate, but this move does not result in Checkmate."
 
+**Game-over rules**:
+- A side with only its king remaining loses when the opponent has another piece.
+- `K vs K` remains a draw.
+- Standard checkmate and python-chess draw rules also apply.
+
 ---
 
 ### 4. `joinGame`
@@ -93,7 +95,7 @@ Join an existing game session. Useful for multi-agent scenarios where one Agent 
 - **Arguments**:
   - `game_id` (string): The ID of the game to join.
 - **Returns**: A list containing a single text block with status, turn information, and the current board state.
-  - The response includes a private Player token and assigns the remaining color.
+  - The response assigns the remaining color.
   - **Success**: "Joined Game {id} Successfully... [Board Text]... Next Action: ..."
   - **Error**: "Error: Game not found"
 

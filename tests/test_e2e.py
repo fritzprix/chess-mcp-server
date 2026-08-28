@@ -81,9 +81,6 @@ async def test_agent_vs_computer(tmp_path):
             
             game_id = match.group(1)
             print(f"Game ID found: {game_id}")
-            token_match = re.search(r"Player token: ([A-Za-z0-9_-]+)", content_text)
-            assert token_match, "Could not find player token in server response"
-            player_token = token_match.group(1)
 
             # --- Step 1.5: Test Invalid Move returns isError == True ---
             print("\n[Step 1.5] Testing Invalid Move 'e2e5'...")
@@ -92,7 +89,6 @@ async def test_agent_vs_computer(tmp_path):
                 arguments={
                     "game_id": game_id,
                     "move": "e2e5",
-                    "player_token": player_token,
                 }
             )
             assert invalid_res.isError is True, "Expected isError=True on illegal move"
@@ -105,7 +101,6 @@ async def test_agent_vs_computer(tmp_path):
                 arguments={
                     "game_id": game_id,
                     "move": "e2e4",
-                    "player_token": player_token,
                 }
             )
             content_text = result.content[0].text
@@ -120,7 +115,6 @@ async def test_agent_vs_computer(tmp_path):
                 "waitForNextTurn",
                 arguments={
                     "game_id": game_id,
-                    "player_token": player_token,
                 }
             )
             content_text = result.content[0].text

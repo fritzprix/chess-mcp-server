@@ -13,7 +13,6 @@ from mcp.types import CallToolResult, EmbeddedResource, TextContent
 @dataclass(frozen=True)
 class GameSession:
     game_id: str
-    player_token: str
     color: str
 
 
@@ -96,29 +95,17 @@ class ChessMcpClient:
         )
         response_text = self.text(result)
         game_match = re.search(r"Game ID: ([a-fA-F0-9-]+)", response_text)
-        token_match = re.search(
-            r"Player token: ([A-Za-z0-9_-]+)",
-            response_text,
-        )
-        if game_match is None or token_match is None:
+        if game_match is None:
             raise RuntimeError(f"Could not parse createGame response:\n{response_text}")
-        return GameSession(game_match.group(1), token_match.group(1), color)
+        return GameSession(game_match.group(1), color)
 
     async def join_game(self, game_id: str) -> GameSession:
         result = await self.call_tool("joinGame", {"game_id": game_id})
         response_text = self.text(result)
-        token_match = re.search(
-            r"Player token: ([A-Za-z0-9_-]+)",
-            response_text,
-        )
         color_match = re.search(r"You are: (White|Black)", response_text)
-        if token_match is None or color_match is None:
+        if color_match is None:
             raise RuntimeError(f"Could not parse joinGame response:\n{response_text}")
-        return GameSession(
-            game_id,
-            token_match.group(1),
-            color_match.group(1).lower(),
-        )
+        return GameSession(game_id, color_match.group(1).lower())
 
     async def finish_turn(
         self,
@@ -132,7 +119,6 @@ class ChessMcpClient:
                 "game_id": game.game_id,
                 "move": move,
                 "claim_win": claim_win,
-                "player_token": game.player_token,
             },
         )
 
@@ -141,6 +127,5 @@ class ChessMcpClient:
             "waitForNextTurn",
             {
                 "game_id": game.game_id,
-                "player_token": game.player_token,
             },
         )

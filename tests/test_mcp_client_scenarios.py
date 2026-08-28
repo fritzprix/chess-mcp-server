@@ -58,16 +58,6 @@ async def test_mcp_client_two_process_agent_scenario(tmp_path):
             white_game = await white_client.create_game("agent", "white")
             black_game = await black_client.join_game(white_game.game_id)
 
-            unauthorized = await black_client.call_tool(
-                "finishTurn",
-                {
-                    "game_id": white_game.game_id,
-                    "move": "e7e5",
-                    "player_token": white_game.player_token,
-                },
-            )
-            assert unauthorized.isError is True
-
             result = await white_client.finish_turn(white_game, "e2e4")
             assert result.isError is not True
 

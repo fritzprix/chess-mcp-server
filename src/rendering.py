@@ -54,7 +54,6 @@ def render_board_to_html(
     is_white_perspective: bool = True,
     difficulty: int = 5,
     game_type: str = "computer",
-    player_token: Optional[str] = None,
     initial_fen: Optional[str] = None,
 ) -> str:
     """
@@ -81,7 +80,6 @@ def render_board_to_html(
         user_side=user_side,
         difficulty=difficulty,
         game_type=game_type,
-        player_token=player_token,
         initial_fen=initial_fen or fen,
     )
     

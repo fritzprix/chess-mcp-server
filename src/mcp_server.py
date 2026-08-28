@@ -33,7 +33,6 @@ DASHBOARD_PORT = 8080
 def _embed_board_ui(
     game,
     ui_color: str,
-    player_token: str | None = None,
 ) -> types.EmbeddedResource:
     is_white_perspective = (ui_color == "white")
     difficulty = game.config.get("difficulty", 5)
@@ -44,7 +43,6 @@ def _embed_board_ui(
         is_white_perspective=is_white_perspective,
         difficulty=difficulty,
         game_type=game_type,
-        player_token=player_token,
     )
     return types.EmbeddedResource(
         type="resource",
@@ -76,12 +74,7 @@ def createGame(
     }
     game = manager.create_game(config)
     opponent_color = "black" if color == "white" else "white"
-    browser_token = (
-        game.black_token if opponent_color == "black" else game.white_token
-    )
     game_url = f"{get_dashboard_url()}/game/{game.id}"
-    if browser_token:
-        game_url += f"?player_token={browser_token}"
     _schedule_open_game_in_browser(game_url)
 
     content = []
@@ -91,7 +84,6 @@ def createGame(
         f"- Game ID: {game.id}\n"
         f"- Type: {type}\n"
         f"- You are: {color.title()}\n"
-        f"- Player token: {game.player_token}\n"
         f"- Difficulty: Level {difficulty} (if computer)\n"
         f"- Board: {game_url}\n"
         f"- Dashboard: {get_dashboard_url()}\n"
@@ -103,15 +95,14 @@ def createGame(
         md += (
             f"\n\n🎯 **REQUIRED NEXT ACTION**: Game started! You are White and move first. "
             f"Review the board state above, select your move, and call "
-            f"`finishTurn(game_id='{game.id}', move='<your_move>', player_token='{game.player_token}')` immediately."
+            f"`finishTurn(game_id='{game.id}', move='<your_move>')` immediately."
         )
 
         full_text = base_info + "\n" + md
         content.append(types.TextContent(type="text", text=full_text))
 
         if showUi:
-            ui_token = game.black_token if color == "white" else game.white_token
-            content.append(_embed_board_ui(game, opponent_color, ui_token))
+            content.append(_embed_board_ui(game, opponent_color))
 
     else:
         first_move_msg = ""
@@ -121,7 +112,7 @@ def createGame(
             full_text = (
                 base_info
                 + f"\n{first_move_msg}\n\n⏳ **REQUIRED NEXT ACTION**: Game started! You are Black. "
-                f"Computer moves first. Call `waitForNextTurn(game_id='{game.id}', player_token='{game.player_token}')` immediately "
+                f"Computer moves first. Call `waitForNextTurn(game_id='{game.id}')` immediately "
                 f"to receive the computer's move."
             )
             content.append(types.TextContent(type="text", text=full_text))
@@ -129,13 +120,12 @@ def createGame(
             full_text = (
                 base_info
                 + f"\n\n⏳ **REQUIRED NEXT ACTION**: Game started! You are Black. Opponent (White) moves first. "
-                f"Call `waitForNextTurn(game_id='{game.id}', player_token='{game.player_token}')` immediately to wait for the opponent's move."
+                f"Call `waitForNextTurn(game_id='{game.id}')` immediately to wait for the opponent's move."
             )
             content.append(types.TextContent(type="text", text=full_text))
 
             if showUi:
-                ui_token = game.white_token if color == "black" else game.black_token
-                content.append(_embed_board_ui(game, opponent_color, ui_token))
+                content.append(_embed_board_ui(game, opponent_color))
 
     return content
 
@@ -143,7 +133,6 @@ def createGame(
 @mcp.tool()
 async def waitForNextTurn(
     game_id: str = Field(..., description="The ID of the active game."),
-    player_token: str | None = Field(None, description="The player token returned by createGame or joinGame.")
 ) -> list:
     """
     Blocks until it is the Agent's turn (or User's turn via Agent proxy).
@@ -157,7 +146,7 @@ async def waitForNextTurn(
         if game.is_game_over:
             return [types.TextContent(type="text", text=f"🏆 Game Over: {game.result}. The game has concluded!")]
 
-        my_color = manager.get_player_color(game_id, player_token)
+        my_color = manager.get_player_color(game_id)
         status = await manager.wait_until_turn(game, my_color, timeout=30.0)
 
         if status == "timeout":
@@ -165,7 +154,7 @@ async def waitForNextTurn(
                 type="text",
                 text=(
                     f"⏳ Timeout: No move received from opponent within 30s.\n\n"
-                    f"👉 **REQUIRED NEXT ACTION**: Call `waitForNextTurn(game_id='{game.id}', player_token='{player_token}')` "
+                    f"👉 **REQUIRED NEXT ACTION**: Call `waitForNextTurn(game_id='{game.id}')` "
                     f"again immediately to continue waiting."
                 ),
             )]
@@ -179,7 +168,7 @@ async def waitForNextTurn(
     except Exception as e:
         raise RuntimeError(
             f"Error while waiting for turn in game '{game_id}': {str(e)}\n\n"
-            f"👉 **REQUIRED NEXT ACTION**: Call `waitForNextTurn(game_id='{game_id}', player_token='{player_token}')` again to retry waiting."
+            f"👉 **REQUIRED NEXT ACTION**: Call `waitForNextTurn(game_id='{game_id}')` again to retry waiting."
         )
 
     my_color_str = "White" if my_color == chess.WHITE else "Black"
@@ -188,14 +177,14 @@ async def waitForNextTurn(
     md += (
         f"\n\n🎯 **REQUIRED NEXT ACTION**: Opponent has moved! It is now your turn ({my_color_str}). "
         f"Review the board state above, select your move in UCI format (e.g. 'e2e4'), and call "
-        f"`finishTurn(game_id='{game.id}', move='<your_move>', player_token='{player_token}')` immediately."
+        f"`finishTurn(game_id='{game.id}', move='<your_move>')` immediately."
     )
 
     content = [types.TextContent(type="text", text=md)]
 
     if game.config.get("showUi"):
         agent_color = "white" if my_color == chess.WHITE else "black"
-        content.append(_embed_board_ui(game, agent_color, player_token))
+        content.append(_embed_board_ui(game, agent_color))
 
     return content
 
@@ -205,18 +194,17 @@ async def finishTurn(
     game_id: str = Field(..., description="The ID of the active game."),
     move: str = Field(..., description="The move in UCI format (e.g., 'e2e4')."),
     claim_win: bool = Field(False, description="Set to true if you are claiming Checkmate or Win with this move."),
-    player_token: str | None = Field(None, description="The player token returned by createGame or joinGame.")
 ) -> list:
     """
     Submits a move to the game server.
     """
     try:
-        await manager.make_move(game_id, move, claim_win, player_token)
+        await manager.make_move(game_id, move, claim_win)
         game = manager.get_game(game_id)
         if not game:
             raise ValueError(f"Game '{game_id}' not found after move.")
 
-        agent_color = manager.get_player_color(game_id, player_token)
+        agent_color = manager.get_player_color(game_id)
         is_agent_turn = (game.board.turn == agent_color)
 
         content = []
@@ -236,21 +224,20 @@ async def finishTurn(
             md = render_board_to_markdown(game.board.fen(), player_color=my_color_str)
             md += (
                 f"\n\n🎯 **REQUIRED NEXT ACTION**: Review the board state above, select your next move "
-                f"in UCI format (e.g. 'e2e4'), and call `finishTurn(game_id='{game.id}', move='<your_move>', player_token='{player_token}')` immediately."
+                f"in UCI format (e.g. 'e2e4'), and call `finishTurn(game_id='{game.id}', move='<your_move>')` immediately."
             )
             content.append(types.TextContent(type="text", text=md))
         else:
             msg += (
                 f"\n\n⏳ **REQUIRED NEXT ACTION**: Your move is complete. Opponent is thinking. "
-                f"Call `waitForNextTurn(game_id='{game.id}', player_token='{player_token}')` immediately to wait for the opponent's move."
+                f"Call `waitForNextTurn(game_id='{game.id}')` immediately to wait for the opponent's move."
             )
             content.append(types.TextContent(type="text", text=msg))
 
             if game.config.get("showUi"):
                 agent_color = game.config.get("color", "white")
                 ui_color = "black" if agent_color == "white" else "white"
-                ui_token = game.black_token if ui_color == "black" else game.white_token
-                content.append(_embed_board_ui(game, ui_color, ui_token))
+                content.append(_embed_board_ui(game, ui_color))
 
         return content
 
@@ -266,13 +253,13 @@ async def finishTurn(
             f"{board_hint}\n\n"
             f"👉 **REQUIRED NEXT ACTION**: Review the error details and board state above, select a valid "
             f"legal move in UCI format (e.g. 'e2e4'), and call "
-            f"`finishTurn(game_id='{game_id}', move='<your_move>', player_token='{player_token}')` again immediately to retry!"
+            f"`finishTurn(game_id='{game_id}', move='<your_move>')` again immediately to retry!"
         )
     except Exception as e:
         raise RuntimeError(
             f"❌ Error submitting move '{move}': {str(e)}\n\n"
             f"👉 **REQUIRED NEXT ACTION**: Check the game state and call "
-            f"`finishTurn(game_id='{game_id}', move='<your_move>', player_token='{player_token}')` again to retry."
+            f"`finishTurn(game_id='{game_id}', move='<your_move>')` again to retry."
         )
 
 
@@ -285,7 +272,7 @@ def joinGame(
     Returns the current board state and turn information.
     """
     try:
-        game, player_token, joined_color = manager.join_game(game_id)
+        game, joined_color = manager.join_game(game_id)
     except ValueError as error:
         raise ValueError(
             f"Unable to join game '{game_id}': {error}"
@@ -295,7 +282,6 @@ def joinGame(
     msg = f"Joined Game '{game.id}' Successfully.\n"
     my_color_str = "White" if joined_color == chess.WHITE else "Black"
     msg += f"You are: {my_color_str}.\n"
-    msg += f"Player token: {player_token}\n"
     turn_color = "White" if game.board.turn == chess.WHITE else "Black"
     msg += f"Current Turn: {turn_color}.\n"
 
@@ -308,12 +294,12 @@ def joinGame(
     if is_my_turn:
         msg += (
             f"\n\n🎯 **REQUIRED NEXT ACTION**: It is YOUR turn! Review the board state above, decide your move "
-            f"in UCI format (e.g. 'e2e4'), and call `finishTurn(game_id='{game.id}', move='<your_move>', player_token='{player_token}')` immediately."
+            f"in UCI format (e.g. 'e2e4'), and call `finishTurn(game_id='{game.id}', move='<your_move>')` immediately."
         )
     else:
         msg += (
             f"\n\n⏳ **REQUIRED NEXT ACTION**: It is opponent's turn. "
-            f"Call `waitForNextTurn(game_id='{game.id}', player_token='{player_token}')` immediately to wait for their move."
+            f"Call `waitForNextTurn(game_id='{game.id}')` immediately to wait for their move."
         )
 
     content.append(types.TextContent(type="text", text=msg))

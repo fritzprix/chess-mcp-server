@@ -35,7 +35,6 @@ manager = GameManager()
 class MoveRequest(BaseModel):
     move: str
     claim_win: bool = False
-    player_token: Optional[str] = None
 
 def get_version():
     try:
@@ -86,7 +85,7 @@ async def clear_dashboard_games():
     return {"status": "ok", "games": []}
 
 @app.get("/game/{game_id}", response_class=HTMLResponse)
-async def view_game(game_id: str, player_token: Optional[str] = None):
+async def view_game(game_id: str):
     game = manager.get_game(game_id)
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")
@@ -99,7 +98,6 @@ async def view_game(game_id: str, player_token: Optional[str] = None):
         is_white_perspective=True,
         difficulty=difficulty,
         game_type=game_type,
-        player_token=player_token,
         initial_fen=chess.STARTING_FEN,
     )
     return html
@@ -121,7 +119,6 @@ async def make_game_move(game_id: str, req: MoveRequest):
             game_id,
             req.move,
             req.claim_win,
-            req.player_token,
         )
         return {"status": "ok", "message": result, "state": game.get_full_state()}
     except ValueError as e:

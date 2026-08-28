@@ -1,6 +1,4 @@
 import asyncio
-import hmac
-import secrets
 import uuid
 import chess
 import threading
@@ -26,6 +24,22 @@ def _captured_symbol(board: chess.Board, move: chess.Move) -> Optional[str]:
     return captured.symbol() if captured else None
 
 
+def _lone_king_loser(board: chess.Board) -> Optional[chess.Color]:
+    """Return the side that has only its king, if that side has lost."""
+    white_pieces = [
+        piece for piece in board.piece_map().values() if piece.color == chess.WHITE
+    ]
+    black_pieces = [
+        piece for piece in board.piece_map().values() if piece.color == chess.BLACK
+    ]
+
+    if len(white_pieces) == 1 and len(black_pieces) > 1:
+        return chess.WHITE
+    if len(black_pieces) == 1 and len(white_pieces) > 1:
+        return chess.BLACK
+    return None
+
+
 @dataclass
 class GameInstance:
     id: str
@@ -44,16 +58,18 @@ class GameInstance:
     listeners: List[ListenerEntry] = field(default_factory=list)
     revision: int = 0
     ai_running: bool = False
-    player_token: Optional[str] = None
-    white_token: Optional[str] = None
-    black_token: Optional[str] = None
 
     @property
     def is_game_over(self):
-        return self.board.is_game_over()
+        return self.board.is_game_over() or _lone_king_loser(self.board) is not None
 
     @property
     def result(self):
+        lone_king_loser = _lone_king_loser(self.board)
+        if lone_king_loser == chess.WHITE:
+            return "Black wins"
+        if lone_king_loser == chess.BLACK:
+            return "White wins"
         if not self.is_game_over:
             return None
         outcome = self.board.outcome()
@@ -173,6 +189,7 @@ class GameManager:
             cls._instance.games: Dict[str, GameInstance] = {}
             cls._instance._lock = threading.RLock()
             cls._instance.dashboard_listeners: List[ListenerEntry] = []
+            cls._instance._local_player_colors: Dict[str, chess.Color] = {}
             cls._instance._db_path = cls._get_database_path()
             cls._instance._initialize_database()
             cls._instance._migrate_legacy_json()
@@ -206,8 +223,6 @@ class GameManager:
                     config TEXT NOT NULL,
                     move_history TEXT NOT NULL,
                     revision INTEGER NOT NULL DEFAULT 0,
-                    white_token TEXT,
-                    black_token TEXT,
                     ai_claim_token TEXT,
                     ai_claimed_until REAL
                 );
@@ -218,8 +233,6 @@ class GameManager:
                 for row in connection.execute("PRAGMA table_info(games)").fetchall()
             }
             column_types = {
-                "white_token": "TEXT",
-                "black_token": "TEXT",
                 "ai_claim_token": "TEXT",
                 "ai_claimed_until": "REAL",
             }
@@ -302,7 +315,7 @@ class GameManager:
             rows = connection.execute(
                 """
                 SELECT id, fen, config, move_history, revision,
-                       white_token, black_token, ai_claimed_until
+                       ai_claimed_until
                 FROM games
                 """
             ).fetchall()
@@ -338,8 +351,6 @@ class GameManager:
                     ai=ChessAI() if config.get("type") == "computer" else None,
                     move_history=history,
                     revision=revision,
-                    white_token=row["white_token"],
-                    black_token=row["black_token"],
                 )
                 continue
 
@@ -348,8 +359,6 @@ class GameManager:
                 existing.config = config
                 existing.move_history = history
                 existing.revision = revision
-                existing.white_token = row["white_token"]
-                existing.black_token = row["black_token"]
                 existing.signal_move()
 
         for game in self.games.values():
@@ -386,15 +395,6 @@ class GameManager:
             self._load_from_disk()
             board = chess.Board()
             ai = ChessAI() if config.get("type") == "computer" else None
-            creator_token = secrets.token_urlsafe(24)
-            creator_color = config.get("color", "white")
-            white_token = creator_token if creator_color == "white" else None
-            black_token = creator_token if creator_color == "black" else None
-            if config.get("type") == "human":
-                if white_token is None:
-                    white_token = secrets.token_urlsafe(24)
-                if black_token is None:
-                    black_token = secrets.token_urlsafe(24)
 
             with self._connect_database() as connection:
                 connection.execute("BEGIN IMMEDIATE")
@@ -405,19 +405,14 @@ class GameManager:
                             connection.execute(
                                 """
                                 INSERT INTO games
-                                    (
-                                        id, fen, config, move_history, revision,
-                                        white_token, black_token
-                                    )
-                                VALUES (?, ?, ?, ?, 0, ?, ?)
+                                    (id, fen, config, move_history, revision)
+                                VALUES (?, ?, ?, ?, 0)
                                 """,
                                 (
                                     game_id,
                                     board.fen(),
                                     json.dumps(config, ensure_ascii=False),
                                     "[]",
-                                    white_token,
-                                    black_token,
                                 ),
                             )
                             break
@@ -436,11 +431,13 @@ class GameManager:
                 config=dict(config),
                 ai=ai,
                 revision=0,
-                player_token=creator_token,
-                white_token=white_token,
-                black_token=black_token,
             )
             self.games[game_id] = game
+            self._local_player_colors[game_id] = (
+                chess.WHITE
+                if config.get("color", "white") == "white"
+                else chess.BLACK
+            )
             self._notify_dashboard("game_created", game_id)
             if config.get("type") == "computer" and config.get("color", "white") == "black":
                 self.schedule_computer_turn(game)
@@ -458,16 +455,14 @@ class GameManager:
             game = self.games.get(game_id)
             return game.get_full_state() if game else None
 
-    def join_game(self, game_id: str) -> Tuple[GameInstance, str, chess.Color]:
-        """Atomically assign the remaining player slot in an agent game."""
+    def join_game(self, game_id: str) -> Tuple[GameInstance, chess.Color]:
+        """Join an agent game and remember the local player's side."""
         with self._lock:
             self._load_from_disk()
             with self._connect_database() as connection:
-                connection.execute("BEGIN IMMEDIATE")
                 row = connection.execute(
                     """
-                    SELECT id, fen, config, move_history, revision,
-                           white_token, black_token
+                    SELECT id, config
                     FROM games
                     WHERE id = ?
                     """,
@@ -480,80 +475,32 @@ class GameManager:
                 if config.get("type") != "agent":
                     raise ValueError("Only agent games can be joined by another agent")
 
-                white_token = row["white_token"]
-                black_token = row["black_token"]
-                if white_token is None:
-                    joined_color = chess.WHITE
-                    token_column = "white_token"
-                elif black_token is None:
-                    joined_color = chess.BLACK
-                    token_column = "black_token"
-                else:
-                    raise ValueError("Game already has two players")
-
-                player_token = secrets.token_urlsafe(24)
-                updated = connection.execute(
-                    f"""
-                    UPDATE games
-                    SET {token_column} = ?, revision = revision + 1
-                    WHERE id = ? AND revision = ?
-                    """,
-                    (player_token, game_id, row["revision"]),
-                )
-                if updated.rowcount != 1:
-                    raise RuntimeError(f"Game {game_id} changed while joining")
-                connection.commit()
-
             game = self.games.get(game_id)
             if game is None:
                 self._load_from_disk()
                 game = self.games.get(game_id)
             if game is None:
                 raise RuntimeError(f"Game {game_id} disappeared while joining")
-            game.revision = int(row["revision"]) + 1
-            if joined_color == chess.WHITE:
-                game.white_token = player_token
-            else:
-                game.black_token = player_token
-            return game, player_token, joined_color
+            joined_color = (
+                chess.BLACK
+                if config.get("color", "white") == "white"
+                else chess.WHITE
+            )
+            self._local_player_colors[game_id] = joined_color
+            return game, joined_color
 
-    def get_player_color(
-        self,
-        game_id: str,
-        player_token: Optional[str],
-    ) -> chess.Color:
-        """Resolve a player's side from the persisted session token."""
+    def get_player_color(self, game_id: str) -> chess.Color:
+        """Return the local side, falling back to the creator's configured side."""
         with self._lock:
             self._load_from_disk()
-            with self._connect_database() as connection:
-                row = connection.execute(
-                    """
-                    SELECT config, white_token, black_token
-                    FROM games
-                    WHERE id = ?
-                    """,
-                    (game_id,),
-                ).fetchone()
-            if row is None:
+            if game_id in self._local_player_colors:
+                return self._local_player_colors[game_id]
+            game = self.games.get(game_id)
+            if game is None:
                 raise ValueError(f"Game {game_id} not found")
-
-            if player_token:
-                if row["white_token"] and hmac.compare_digest(
-                    row["white_token"], player_token
-                ):
-                    return chess.WHITE
-                if row["black_token"] and hmac.compare_digest(
-                    row["black_token"], player_token
-                ):
-                    return chess.BLACK
-
-            if row["white_token"] is not None or row["black_token"] is not None:
-                raise ValueError("Player token is not authorized for this game")
-
-            config = json.loads(row["config"])
             return (
                 chess.WHITE
-                if config.get("color", "white") == "white"
+                if game.config.get("color", "white") == "white"
                 else chess.BLACK
             )
 
@@ -695,6 +642,7 @@ class GameManager:
             if (
                 config.get("type") != "computer"
                 or board.is_game_over()
+                or _lone_king_loser(board) is not None
                 or board.turn != ai_color
                 or (claimed_until is not None and claimed_until > time.time())
             ):
@@ -773,7 +721,6 @@ class GameManager:
         game_id: str,
         move_uci: str,
         claim_win: bool = False,
-        player_token: Optional[str] = None,
     ) -> str:
         """
         Executes a move.
@@ -787,8 +734,7 @@ class GameManager:
                 connection.execute("BEGIN IMMEDIATE")
                 row = connection.execute(
                     """
-                    SELECT id, fen, config, move_history, revision,
-                           white_token, black_token
+                    SELECT id, fen, config, move_history, revision
                     FROM games
                     WHERE id = ?
                     """,
@@ -807,22 +753,8 @@ class GameManager:
                 except (ValueError, TypeError, json.JSONDecodeError) as error:
                     raise RuntimeError(f"Stored game {game_id} is invalid: {error}") from error
 
-                expected_token = (
-                    row["white_token"]
-                    if board.turn == chess.WHITE
-                    else row["black_token"]
-                )
-                has_player_tokens = (
-                    row["white_token"] is not None
-                    or row["black_token"] is not None
-                )
-                if has_player_tokens and expected_token is None:
-                    raise ValueError("No player is assigned to the current turn")
-                if expected_token is not None:
-                    if player_token is None:
-                        raise ValueError("A player token is required to move this game")
-                    if not hmac.compare_digest(expected_token, player_token):
-                        raise ValueError("Player token is not authorized for the current turn")
+                if board.is_game_over() or _lone_king_loser(board) is not None:
+                    raise ValueError(f"Game {game_id} is already over")
 
                 try:
                     move = chess.Move.from_uci(move_uci)
@@ -889,8 +821,6 @@ class GameManager:
                     ai=ChessAI() if config.get("type") == "computer" else None,
                     move_history=history,
                     revision=new_revision,
-                    white_token=row["white_token"],
-                    black_token=row["black_token"],
                 )
                 self.games[game_id] = game
             else:
@@ -898,8 +828,6 @@ class GameManager:
                 game.config = config
                 game.move_history = history
                 game.revision = new_revision
-                game.white_token = row["white_token"]
-                game.black_token = row["black_token"]
 
             game.signal_move()
             game.notify_listeners(event_type="move")
@@ -907,7 +835,7 @@ class GameManager:
 
             if (
                 game.config.get("type") == "computer"
-                and not game.board.is_game_over()
+                and not game.is_game_over
             ):
                 user_color = (
                     chess.WHITE
