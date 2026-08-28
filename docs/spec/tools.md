@@ -78,8 +78,11 @@ Submits a move to the game server. This tool is capable of handling moves from A
   - **Success / Human's Turn**: "Waiting for Human..." + UI Resource (if `showUi`). Next action: None (Wait for User Interaction).
   - **Success / Computer's Turn**: "Waiting for Computer..." + Text. Next action: `waitForNextTurn`.
   - **Success (Game Over)**: "Move accepted. Game Over: [Result]."
-  - **Error - Invalid Move**: "Invalid move: [Reason]"
-  - **Error - Failed Claim**: "Move rejected: You claimed Checkmate, but this move does not result in Checkmate."
+  - **Error - Game Not Found**: Identifies the missing `game_id`.
+  - **Error - Invalid Format**: Explains that moves must use UCI notation.
+  - **Error - Illegal Move**: Includes the current board and asks for a legal move.
+  - **Error - Failed Claim**: Explains why the checkmate claim was rejected.
+  - **Error - Concurrent Update**: Asks the caller to read the latest state and retry.
 
 **Game-over rules**:
 - A side with only its king remaining loses when the opponent has another piece.

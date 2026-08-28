@@ -196,8 +196,25 @@ async def finishTurn(
     claim_win: bool = Field(False, description="Set to true if you are claiming Checkmate or Win with this move."),
 ) -> list:
     """
-    Submits a move to the game server.
+    Submits a move and returns the updated state or a precise failure.
     """
+    game = manager.get_game(game_id)
+    if not game:
+        raise ValueError(
+            f"❌ Game '{game_id}' was not found. "
+            "Check the game_id and try again."
+        )
+    if game.is_game_over:
+        return [
+            types.TextContent(
+                type="text",
+                text=(
+                    f"🏁 Game Over: {game.result}. "
+                    "No further moves are needed."
+                ),
+            )
+        ]
+
     try:
         await manager.make_move(game_id, move, claim_win)
         game = manager.get_game(game_id)
@@ -243,24 +260,52 @@ async def finishTurn(
 
     except ValueError as e:
         game = manager.get_game(game_id)
-        board_hint = ""
-        if game:
+        details = str(e)
+        details_lower = details.lower()
+        if game is None or "not found" in details_lower:
+            message = (
+                f"❌ Game '{game_id}' was not found. "
+                "Check the game_id and try again."
+            )
+        elif "already over" in details_lower:
+            message = (
+                f"🏁 Game Over: {game.result}. "
+                "No further moves are needed."
+            )
+        elif "invalid uci move format" in details_lower:
+            message = (
+                f"❌ Invalid move format: '{move}'. "
+                "Use UCI notation such as 'e2e4' or 'a7a8q'."
+            )
+        elif "illegal move" in details_lower:
+            message = (
+                f"❌ Illegal move: '{move}'. "
+                "Review the current board and choose a legal move."
+            )
+        elif "claimed checkmate" in details_lower:
+            message = f"❌ Checkmate claim rejected: {details}"
+        else:
+            message = f"❌ Move rejected: {details}"
+
+        if game is not None:
             my_color_str = game.config.get("color", "white").title()
-            board_hint = "\n\n" + render_board_to_markdown(game.board.fen(), player_color=my_color_str)
-        raise ValueError(
-            f"❌ Move Failed: '{move}' is invalid or illegal.\n"
-            f"Details: {str(e)}"
-            f"{board_hint}\n\n"
-            f"👉 **REQUIRED NEXT ACTION**: Review the error details and board state above, select a valid "
-            f"legal move in UCI format (e.g. 'e2e4'), and call "
-            f"`finishTurn(game_id='{game_id}', move='<your_move>')` again immediately to retry!"
-        )
+            message += (
+                "\n\n"
+                + render_board_to_markdown(
+                    game.board.fen(), player_color=my_color_str
+                )
+                + f"\n\n👉 Retry with `finishTurn(game_id='{game_id}', move='<legal_uci_move>')`."
+            )
+        raise ValueError(message) from e
+    except RuntimeError as e:
+        raise RuntimeError(
+            f"❌ Game state changed while submitting move '{move}'. "
+            "Read the latest board state and retry with a legal move."
+        ) from e
     except Exception as e:
         raise RuntimeError(
-            f"❌ Error submitting move '{move}': {str(e)}\n\n"
-            f"👉 **REQUIRED NEXT ACTION**: Check the game state and call "
-            f"`finishTurn(game_id='{game_id}', move='<your_move>')` again to retry."
-        )
+            f"❌ Unexpected error while submitting move '{move}': {str(e)}"
+        ) from e
 
 
 @mcp.tool()
