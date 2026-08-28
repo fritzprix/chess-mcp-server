@@ -1160,14 +1160,17 @@
         async function pickWebCodecsVideoConfig(width, height) {
             if (!window.VideoEncoder || !window.VideoFrame) return null;
             const candidates = [
-                { codec: 'vp09.00.10.08', muxCodec: 'V_VP9' },
-                { codec: 'vp8', muxCodec: 'V_VP8' }
+                // VP8 has broader playback support, especially on Windows.
+                { codec: 'vp8', muxCodec: 'V_VP8' },
+                { codec: 'vp09.00.10.08', muxCodec: 'V_VP9' }
             ];
             for (const c of candidates) {
                 const config = {
                     codec: c.codec,
                     width,
                     height,
+                    displayWidth: width,
+                    displayHeight: height,
                     bitrate: 2_500_000,
                     framerate: 30
                 };
@@ -1182,6 +1185,22 @@
                 }
             }
             return null;
+        }
+
+        async function createReplayVideoFrame(canvas, timestampUs, durationUs, width, height) {
+            // Materialize the canvas pixels first. This avoids black frames on
+            // browsers that do not reliably snapshot a detached canvas directly.
+            const bitmap = await createImageBitmap(canvas);
+            try {
+                return new VideoFrame(bitmap, {
+                    timestamp: timestampUs,
+                    duration: durationUs,
+                    displayWidth: width,
+                    displayHeight: height
+                });
+            } finally {
+                bitmap.close();
+            }
         }
 
         async function encodeReplayWebmOffline(frames, delayMs, width, height) {
@@ -1220,10 +1239,9 @@
                 if (encodeError) throw encodeError;
                 const f = frames[i];
                 drawReplayFrameToCanvas(ctx, f.fen, width, height, f.moveInfo, f.title, i, frames.length);
-                const frame = new VideoFrame(canvas, {
-                    timestamp: timestampUs,
-                    duration: durationUs
-                });
+                const frame = await createReplayVideoFrame(
+                    canvas, timestampUs, durationUs, width, height
+                );
                 encoder.encode(frame, { keyFrame: i === 0 || (i % 12) === 0 });
                 frame.close();
                 timestampUs += durationUs;
@@ -1238,7 +1256,9 @@
             // Muxers often treat duration as last timestamp; add a 1ms tail so the
             // final position keeps its full playback delay.
             if (!encodeError) {
-                const tail = new VideoFrame(canvas, { timestamp: timestampUs, duration: 1000 });
+                const tail = await createReplayVideoFrame(
+                    canvas, timestampUs, 1000, width, height
+                );
                 encoder.encode(tail, { keyFrame: false });
                 tail.close();
             }
