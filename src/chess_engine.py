@@ -1,6 +1,7 @@
 import chess
 import math
 import random
+from typing import Optional
 
 class ChessAI:
     def __init__(self):
@@ -25,7 +26,7 @@ class ChessAI:
             chess.ROOK: 50, chess.QUEEN: 90, chess.KING: 900
         }
 
-    def get_move(self, board: chess.Board, level: int) -> chess.Move:
+    def get_move(self, board: chess.Board, level: int) -> Optional[chess.Move]:
         """
         Returns the best move based on the difficulty level (1-10).
         """
@@ -95,8 +96,12 @@ class ChessAI:
                     break
             return min_eval
 
-    def _get_best_move_minimax(self, board, depth):
-        best_move = None
+    def _get_best_move_minimax(
+        self,
+        board: chess.Board,
+        depth: int,
+    ) -> Optional[chess.Move]:
+        best_move: Optional[chess.Move] = None
         best_value = -math.inf if board.turn == chess.WHITE else math.inf
         alpha = -math.inf
         beta = math.inf

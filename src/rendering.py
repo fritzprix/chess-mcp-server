@@ -1,6 +1,11 @@
 import chess
+from typing import Optional
 
-def render_board_to_markdown(fen: str, player_color: str = None, difficulty: int = None) -> str:
+def render_board_to_markdown(
+    fen: str,
+    player_color: Optional[str] = None,
+    difficulty: Optional[int] = None,
+) -> str:
     """
     Converts a FEN string into a Markdown formatted table representation of the board.
     
@@ -43,7 +48,15 @@ def render_board_to_markdown(fen: str, player_color: str = None, difficulty: int
     
     return output
 
-def render_board_to_html(fen: str, game_id: str, is_white_perspective: bool = True, difficulty: int = 5, game_type: str = "computer") -> str:
+def render_board_to_html(
+    fen: str,
+    game_id: str,
+    is_white_perspective: bool = True,
+    difficulty: int = 5,
+    game_type: str = "computer",
+    player_token: Optional[str] = None,
+    initial_fen: Optional[str] = None,
+) -> str:
     """
     Renders an interactive HTML chess board for MCP-UI.
     Includes 'postMessage' logic for finishTurn.
@@ -67,7 +80,9 @@ def render_board_to_html(fen: str, game_id: str, is_white_perspective: bool = Tr
         display_turn=display_turn,
         user_side=user_side,
         difficulty=difficulty,
-        game_type=game_type
+        game_type=game_type,
+        player_token=player_token,
+        initial_fen=initial_fen or fen,
     )
     
     return html

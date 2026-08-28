@@ -640,7 +640,8 @@
 
     <script>
         const gameId = "{{ game_id }}";
-        const initialFen = "{{ fen }}";
+        const initialFen = "{{ initial_fen }}";
+        const playerToken = "{{ player_token or '' }}";
         const isWhitePerspective = "{{ is_white_perspective }}" === "True";
         
         let currentGameState = null;
@@ -927,9 +928,15 @@
                     type: 'tool',
                     payload: {
                         toolName: 'finishTurn',
-                        params: { game_id: gameId, move: move, claim_win: claimWin }
+                        params: {
+                            game_id: gameId,
+                            move: move,
+                            claim_win: claimWin,
+                            player_token: playerToken
+                        }
                     }
                 }, '*');
+                return;
             }
 
             // HTTP Fallback to API
@@ -937,7 +944,11 @@
                 const resp = await fetch(`/api/game/${gameId}/move`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ move: move, claim_win: claimWin })
+                    body: JSON.stringify({
+                        move: move,
+                        claim_win: claimWin,
+                        player_token: playerToken
+                    })
                 });
                 const resData = await resp.json();
                 if (resp.ok) {

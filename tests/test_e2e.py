@@ -15,17 +15,17 @@ sys.path.append(project_root)
 async def test_stdio_safe_browser_open_keeps_mcp_alive(tmp_path):
     """Browser must open, but its stdout must not corrupt MCP stdio."""
     stamp = tmp_path / "opened"
-    fake_browser = tmp_path / "fake-browser"
+    fake_browser = tmp_path / "fake_browser.py"
     fake_browser.write_text(
-        "#!/bin/sh\n"
-        f"echo 'browser output that would corrupt MCP stdio'\n"
-        f"echo opened > '{stamp}'\n",
+        "import pathlib\n"
+        "print('browser output that would corrupt MCP stdio')\n"
+        f"pathlib.Path(r'{stamp}').write_text('opened', encoding='utf-8')\n",
         encoding="utf-8",
     )
-    fake_browser.chmod(0o755)
 
     env = os.environ.copy()
-    env["BROWSER"] = str(fake_browser)
+    env["BROWSER"] = f"{sys.executable} {fake_browser} %s"
+    env["CHESS_MCP_DB_PATH"] = str(tmp_path / "games.sqlite3")
     # Avoid xdg-open taking precedence over BROWSER in some environments.
     env["PATH"] = str(tmp_path) + os.pathsep + env.get("PATH", "")
     server_params = StdioServerParameters(
@@ -44,7 +44,7 @@ async def test_stdio_safe_browser_open_keeps_mcp_alive(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_agent_vs_computer():
+async def test_agent_vs_computer(tmp_path):
     print("Starting E2E Test: Agent vs Computer...")
 
     # Define server parameters
@@ -52,7 +52,7 @@ async def test_agent_vs_computer():
     server_params = StdioServerParameters(
         command=sys.executable,
         args=["-m", "src.mcp_server"],
-        env=os.environ.copy() # Pass current env
+        env={**os.environ, "CHESS_MCP_DB_PATH": str(tmp_path / "games.sqlite3")}
     )
 
     async with stdio_client(server_params) as (read, write):
@@ -81,12 +81,19 @@ async def test_agent_vs_computer():
             
             game_id = match.group(1)
             print(f"Game ID found: {game_id}")
+            token_match = re.search(r"Player token: ([A-Za-z0-9_-]+)", content_text)
+            assert token_match, "Could not find player token in server response"
+            player_token = token_match.group(1)
 
             # --- Step 1.5: Test Invalid Move returns isError == True ---
             print("\n[Step 1.5] Testing Invalid Move 'e2e5'...")
             invalid_res = await session.call_tool(
                 "finishTurn",
-                arguments={"game_id": game_id, "move": "e2e5"}
+                arguments={
+                    "game_id": game_id,
+                    "move": "e2e5",
+                    "player_token": player_token,
+                }
             )
             assert invalid_res.isError is True, "Expected isError=True on illegal move"
             print("Invalid move correctly returned isError=True!")
@@ -95,7 +102,11 @@ async def test_agent_vs_computer():
             print("\n[Step 2] Making Move 'e2e4'...")
             result = await session.call_tool(
                 "finishTurn",
-                arguments={"game_id": game_id, "move": "e2e4"}
+                arguments={
+                    "game_id": game_id,
+                    "move": "e2e4",
+                    "player_token": player_token,
+                }
             )
             content_text = result.content[0].text
             print(f"Server Response:\n{content_text}")
@@ -107,7 +118,10 @@ async def test_agent_vs_computer():
             
             result = await session.call_tool(
                 "waitForNextTurn",
-                arguments={"game_id": game_id}
+                arguments={
+                    "game_id": game_id,
+                    "player_token": player_token,
+                }
             )
             content_text = result.content[0].text
             print(f"Server Response:\n{content_text}")
@@ -136,12 +150,12 @@ def test_fastmcp_import_regression():
 
 
 @pytest.mark.asyncio
-async def test_fast_initialization_handshake():
+async def test_fast_initialization_handshake(tmp_path):
     """Regression test: MCP initialize() handshake must complete quickly (< 2.0s)."""
     server_params = StdioServerParameters(
         command=sys.executable,
         args=["-m", "src.mcp_server"],
-        env=os.environ.copy()
+        env={**os.environ, "CHESS_MCP_DB_PATH": str(tmp_path / "games.sqlite3")}
     )
 
     async with stdio_client(server_params) as (read, write):

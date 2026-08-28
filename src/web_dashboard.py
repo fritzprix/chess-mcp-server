@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, StreamingResponse, Response
 from pydantic import BaseModel
+from contextlib import asynccontextmanager
 import uvicorn
 import asyncio
 import os
@@ -14,12 +15,27 @@ from typing import List, Optional
 from src.game_state import GameManager
 from src.rendering import render_board_to_html
 
-app = FastAPI(title="Chess MCP Dashboard")
+@asynccontextmanager
+async def dashboard_lifespan(_: FastAPI):
+    _write_port_file(ACTIVE_PORT)
+    _dashboard_ready.set()
+    print(
+        f"Dashboard listening on http://127.0.0.1:{ACTIVE_PORT}",
+        file=sys.stderr,
+    )
+    try:
+        yield
+    finally:
+        _dashboard_ready.clear()
+
+
+app = FastAPI(title="Chess MCP Dashboard", lifespan=dashboard_lifespan)
 manager = GameManager()
 
 class MoveRequest(BaseModel):
     move: str
     claim_win: bool = False
+    player_token: Optional[str] = None
 
 def get_version():
     try:
@@ -70,22 +86,30 @@ async def clear_dashboard_games():
     return {"status": "ok", "games": []}
 
 @app.get("/game/{game_id}", response_class=HTMLResponse)
-async def view_game(game_id: str):
+async def view_game(game_id: str, player_token: Optional[str] = None):
     game = manager.get_game(game_id)
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")
         
     difficulty = game.config.get("difficulty", 5)
     game_type = game.config.get("type", "computer")
-    html = render_board_to_html(game.board.fen(), game.id, is_white_perspective=True, difficulty=difficulty, game_type=game_type)
+    html = render_board_to_html(
+        game.board.fen(),
+        game.id,
+        is_white_perspective=True,
+        difficulty=difficulty,
+        game_type=game_type,
+        player_token=player_token,
+        initial_fen=chess.STARTING_FEN,
+    )
     return html
 
 @app.get("/api/game/{game_id}/state")
 async def get_game_state(game_id: str):
-    game = manager.get_game(game_id)
-    if not game:
+    state = manager.get_game_state(game_id)
+    if not state:
         raise HTTPException(status_code=404, detail="Game not found")
-    return game.get_full_state()
+    return state
 
 @app.post("/api/game/{game_id}/move")
 async def make_game_move(game_id: str, req: MoveRequest):
@@ -93,7 +117,12 @@ async def make_game_move(game_id: str, req: MoveRequest):
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")
     try:
-        result = await manager.make_move(game_id, req.move, req.claim_win)
+        result = await manager.make_move(
+            game_id,
+            req.move,
+            req.claim_win,
+            req.player_token,
+        )
         return {"status": "ok", "message": result, "state": game.get_full_state()}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -117,16 +146,26 @@ async def game_events_sse(game_id: str, request: Request):
             initial_data = game.get_full_state()
             initial_data["event_type"] = "init"
             yield f"data: {json.dumps(initial_data)}\n\n"
+            last_revision = game.revision
 
             while True:
                 if await request.is_disconnected():
                     break
                 try:
-                    data = await asyncio.wait_for(q.get(), timeout=15.0)
+                    data = await asyncio.wait_for(q.get(), timeout=1.0)
+                    last_revision = data.get("revision", last_revision)
                     yield f"data: {json.dumps(data)}\n\n"
                 except asyncio.TimeoutError:
-                    # Ping keepalive
-                    yield ": ping\n\n"
+                    current_game = manager.get_game(game_id)
+                    if current_game is None:
+                        break
+                    if current_game.revision != last_revision:
+                        current_data = current_game.get_full_state()
+                        current_data["event_type"] = "move"
+                        last_revision = current_game.revision
+                        yield f"data: {json.dumps(current_data)}\n\n"
+                    else:
+                        yield ": ping\n\n"
         finally:
             if entry in game.listeners:
                 game.listeners.remove(entry)
@@ -147,15 +186,23 @@ async def dashboard_events_sse(request: Request):
                 "games": manager.list_games()
             }
             yield f"data: {json.dumps(initial_data)}\n\n"
+            last_games = json.dumps(initial_data["games"], sort_keys=True)
 
             while True:
                 if await request.is_disconnected():
                     break
                 try:
-                    data = await asyncio.wait_for(q.get(), timeout=15.0)
+                    data = await asyncio.wait_for(q.get(), timeout=1.0)
+                    last_games = json.dumps(data.get("games", []), sort_keys=True)
                     yield f"data: {json.dumps(data)}\n\n"
                 except asyncio.TimeoutError:
-                    yield ": ping\n\n"
+                    current_games = manager.list_games()
+                    current_serialized = json.dumps(current_games, sort_keys=True)
+                    if current_serialized != last_games:
+                        last_games = current_serialized
+                        yield f"data: {json.dumps({'event_type': 'update', 'games': current_games})}\n\n"
+                    else:
+                        yield ": ping\n\n"
         finally:
             if entry in manager.dashboard_listeners:
                 manager.dashboard_listeners.remove(entry)
@@ -238,16 +285,6 @@ def _write_port_file(port: int) -> None:
         print(f"Warning: could not write port file {_PORT_FILE}: {e}", file=sys.stderr)
 
 
-@app.on_event("startup")
-async def _on_dashboard_startup():
-    _write_port_file(ACTIVE_PORT)
-    _dashboard_ready.set()
-    print(
-        f"Dashboard listening on http://127.0.0.1:{ACTIVE_PORT}",
-        file=sys.stderr,
-    )
-
-
 def start_dashboard(port: int = 8080):
     """
     Bind the dashboard in this thread with its own asyncio event loop.
@@ -271,7 +308,7 @@ def start_dashboard(port: int = 8080):
             ACTIVE_PORT = p
             config = uvicorn.Config(
                 app,
-                host="0.0.0.0",
+                host="127.0.0.1",
                 port=p,
                 log_level="warning",
                 access_log=False,
@@ -280,7 +317,7 @@ def start_dashboard(port: int = 8080):
             server = uvicorn.Server(config)
             server.install_signal_handlers = lambda: None
 
-            print(f"Dashboard: binding 0.0.0.0:{p} ...", file=sys.stderr)
+            print(f"Dashboard: binding 127.0.0.1:{p} ...", file=sys.stderr)
             try:
                 loop.run_until_complete(server.serve())
                 print(f"Dashboard: server on port {p} stopped", file=sys.stderr)

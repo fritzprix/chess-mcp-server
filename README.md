@@ -21,7 +21,7 @@ Capable of visualizing the board in real-time HTML, understanding spatial relati
 | :--- | :--- |
 | `createGame` | Initializes a new chess game session against Computer or another Agent. |
 | `joinGame` | Joins an existing game using its Game ID. |
-| `finishTurn` | Submits a move (algebraic or UCI) and optionally claims a win. |
+| `finishTurn` | Submits a move in UCI format and optionally claims a win. |
 | `waitForNextTurn` | Long-polling tool that waits for the opponent's move. |
 
 > For full specification, see [docs/spec/tools.md](docs/spec/tools.md).

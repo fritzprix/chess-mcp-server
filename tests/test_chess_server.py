@@ -12,7 +12,8 @@ from src.chess_engine import ChessAI
 from src.rendering import render_board_to_markdown
 
 @pytest.fixture(autouse=True)
-def reset_singleton():
+def reset_singleton(tmp_path, monkeypatch):
+    monkeypatch.setenv("CHESS_MCP_DB_PATH", str(tmp_path / "games.sqlite3"))
     GameManager._instance = None
     yield
     if GameManager._instance:
@@ -34,7 +35,7 @@ async def test_make_move_logic():
     config = {"type": "agent"}
     game = manager.create_game(config)
     
-    await manager.make_move(game.id, "e2e4")
+    await manager.make_move(game.id, "e2e4", player_token=game.player_token)
     assert game.board.piece_at(chess.E4).symbol() == "P"
     assert game.board.turn == chess.BLACK
     assert len(game.move_history) == 1
@@ -47,7 +48,7 @@ async def test_invalid_move():
     game = manager.create_game(config)
     
     with pytest.raises(ValueError):
-        await manager.make_move(game.id, "e2e5")
+        await manager.make_move(game.id, "e2e5", player_token=game.player_token)
 
 @pytest.mark.asyncio
 async def test_checkmate_claim_invalid():
@@ -56,7 +57,12 @@ async def test_checkmate_claim_invalid():
     game = manager.create_game(config)
     
     with pytest.raises(ValueError, match="Move rejected: You claimed Checkmate"):
-        await manager.make_move(game.id, "e2e4", claim_win=True)
+        await manager.make_move(
+            game.id,
+            "e2e4",
+            claim_win=True,
+            player_token=game.player_token,
+        )
 
 def test_engine_level_1():
     ai = ChessAI()
@@ -79,11 +85,15 @@ async def test_actionable_error_format():
     game = manager.create_game(config)
     
     with pytest.raises(ValueError) as exc_info:
-        await manager.make_move(game.id, "invalid_format")
+        await manager.make_move(
+            game.id,
+            "invalid_format",
+            player_token=game.player_token,
+        )
     assert "Please use standard format" in str(exc_info.value)
     
     with pytest.raises(ValueError) as exc_info:
-        await manager.make_move(game.id, "e2e8")
+        await manager.make_move(game.id, "e2e8", player_token=game.player_token)
     assert "Sample legal moves:" in str(exc_info.value)
 
 
@@ -92,18 +102,56 @@ async def test_wait_until_turn_no_lost_wakeup():
     """Opponent move before wait must not hang (set/clear lost-wakeup regression)."""
     manager = GameManager()
     game = manager.create_game({"type": "agent", "color": "white"})
-    await manager.make_move(game.id, "e2e4")
-    await manager.make_move(game.id, "e7e5")  # back to white — signal already fired
+    _, black_token, _ = manager.join_game(game.id)
+    await manager.make_move(game.id, "e2e4", player_token=game.player_token)
+    await manager.make_move(game.id, "e7e5", player_token=black_token)  # back to white — signal already fired
     status = await manager.wait_until_turn(game, chess.WHITE, timeout=1.0)
     assert status == "my_turn"
+
+
+@pytest.mark.asyncio
+async def test_player_tokens_enforce_turn_ownership():
+    manager = GameManager()
+    game = manager.create_game({"type": "agent", "color": "white"})
+    _, black_token, black_color = manager.join_game(game.id)
+
+    assert black_color == chess.BLACK
+    with pytest.raises(ValueError, match="not authorized"):
+        await manager.make_move(
+            game.id,
+            "e7e5",
+            player_token=black_token,
+        )
+
+    await manager.make_move(game.id, "e2e4", player_token=game.player_token)
+    await manager.make_move(game.id, "e7e5", player_token=black_token)
+
+
+@pytest.mark.asyncio
+async def test_state_reloads_from_shared_sqlite_store():
+    manager = GameManager()
+    game = manager.create_game({"type": "agent", "color": "white"})
+    await manager.make_move(game.id, "e2e4", player_token=game.player_token)
+
+    GameManager._instance = None
+    reloaded_manager = GameManager()
+    reloaded_game = reloaded_manager.get_game(game.id)
+
+    assert reloaded_game is not None
+    assert reloaded_game.board.fen() == game.board.fen()
+    assert reloaded_game.revision == 1
 
 
 @pytest.mark.asyncio
 async def test_en_passant_capture_recorded():
     manager = GameManager()
     game = manager.create_game({"type": "agent"})
-    game.board.set_fen("rnbqkbnr/ppp1pppp/8/3pP3/8/8/PPPP1PPP/RNBQKBNR w KQkq d6 0 3")
-    await manager.make_move(game.id, "e5d6")
+    _, black_token, _ = manager.join_game(game.id)
+    await manager.make_move(game.id, "e2e4", player_token=game.player_token)
+    await manager.make_move(game.id, "a7a6", player_token=black_token)
+    await manager.make_move(game.id, "e4e5", player_token=game.player_token)
+    await manager.make_move(game.id, "d7d5", player_token=black_token)
+    await manager.make_move(game.id, "e5d6", player_token=game.player_token)
     assert game.move_history[-1]["captured"] == "p"
 
 

@@ -1,9 +1,12 @@
 import asyncio
+import hmac
+import secrets
 import uuid
 import chess
 import threading
 import json
 import os
+import sqlite3
 import time
 from typing import Dict, Optional, List, Tuple, Union
 from dataclasses import dataclass, field
@@ -39,6 +42,11 @@ class GameInstance:
     move_history: List[dict] = field(default_factory=list)
 
     listeners: List[ListenerEntry] = field(default_factory=list)
+    revision: int = 0
+    ai_running: bool = False
+    player_token: Optional[str] = None
+    white_token: Optional[str] = None
+    black_token: Optional[str] = None
 
     @property
     def is_game_over(self):
@@ -124,14 +132,15 @@ class GameInstance:
             "turn": turn_str,
             "is_game_over": self.is_game_over,
             "result": self.result,
-            "config": self.config,
-            "move_history": self.move_history,
-            "last_move": last_move,
+            "config": dict(self.config),
+            "move_history": [dict(move) for move in self.move_history],
+            "last_move": dict(last_move) if last_move else None,
             "in_check": self.board.is_check(),
             "legal_moves": [m.uci() for m in self.board.legal_moves],
             "captured_white": captured_white,
             "captured_black": captured_black,
             "move_version": self.move_version,
+            "revision": self.revision,
         }
 
 
@@ -151,114 +160,290 @@ class GameManager:
                 unique_paths.append(p)
         return unique_paths
 
+    @classmethod
+    def _get_database_path(cls) -> str:
+        configured_path = os.environ.get("CHESS_MCP_DB_PATH")
+        if configured_path:
+            return os.path.abspath(os.path.expanduser(configured_path))
+        return os.path.join(os.path.expanduser("~"), ".chess_mcp_games.sqlite3")
+
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super(GameManager, cls).__new__(cls)
             cls._instance.games: Dict[str, GameInstance] = {}
             cls._instance._lock = threading.RLock()
             cls._instance.dashboard_listeners: List[ListenerEntry] = []
+            cls._instance._db_path = cls._get_database_path()
+            cls._instance._initialize_database()
+            cls._instance._migrate_legacy_json()
             cls._instance._load_from_disk()
         return cls._instance
 
-    def _atomic_write_json(self, path: str, data: dict):
-        directory = os.path.dirname(path) or "."
+    def _connect_database(self) -> sqlite3.Connection:
+        directory = os.path.dirname(self._db_path) or "."
         os.makedirs(directory, exist_ok=True)
-        tmp_path = f"{path}.{os.getpid()}.tmp"
-        try:
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(tmp_path, path)
-        finally:
-            if os.path.exists(tmp_path):
-                try:
-                    os.remove(tmp_path)
-                except OSError:
-                    pass
+        connection = sqlite3.connect(
+            self._db_path,
+            timeout=30.0,
+            isolation_level=None,
+        )
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA busy_timeout = 30000")
+        return connection
 
-    def _save_to_disk(self):
-        try:
-            data = {}
-            for path in self._get_save_paths():
-                if os.path.exists(path):
+    def _initialize_database(self) -> None:
+        with self._connect_database() as connection:
+            connection.execute("PRAGMA journal_mode = WAL")
+            connection.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS metadata (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS games (
+                    id TEXT PRIMARY KEY,
+                    fen TEXT NOT NULL,
+                    config TEXT NOT NULL,
+                    move_history TEXT NOT NULL,
+                    revision INTEGER NOT NULL DEFAULT 0,
+                    white_token TEXT,
+                    black_token TEXT,
+                    ai_claim_token TEXT,
+                    ai_claimed_until REAL
+                );
+                """
+            )
+            columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(games)").fetchall()
+            }
+            column_types = {
+                "white_token": "TEXT",
+                "black_token": "TEXT",
+                "ai_claim_token": "TEXT",
+                "ai_claimed_until": "REAL",
+            }
+            for column, column_type in column_types.items():
+                if column not in columns:
+                    connection.execute(
+                        f"ALTER TABLE games ADD COLUMN {column} {column_type}"
+                    )
+
+    def _migrate_legacy_json(self) -> None:
+        with self._connect_database() as connection:
+            migrated = connection.execute(
+                "SELECT value FROM metadata WHERE key = 'legacy_json_migrated'"
+            ).fetchone()
+            if migrated is not None:
+                return
+
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                for path in self._get_save_paths():
+                    if not os.path.exists(path):
+                        continue
                     try:
-                        with open(path, "r", encoding="utf-8") as f:
-                            disk_content = json.load(f)
-                            if isinstance(disk_content, dict):
-                                data.update(disk_content)
-                    except Exception:
-                        pass
+                        with open(path, "r", encoding="utf-8") as file:
+                            data = json.load(file)
+                    except (OSError, ValueError):
+                        continue
 
-            for g_id, g in self.games.items():
-                data[g_id] = {
-                    "id": g.id,
-                    "fen": g.board.fen(),
-                    "config": g.config,
-                    "move_history": g.move_history,
-                }
+                    if not isinstance(data, dict):
+                        continue
 
-            for path in self._get_save_paths():
-                try:
-                    self._atomic_write_json(path, data)
-                except Exception as e:
-                    import sys
-                    print(f"Warning: Failed to save game state to {path}: {e}", file=sys.stderr)
-        except Exception as e:
-            import sys
-            print(f"Warning: Failed to serialize game state: {e}", file=sys.stderr)
+                    for game_id, item in data.items():
+                        if not isinstance(item, dict):
+                            continue
+                        fen = item.get("fen")
+                        config = item.get("config", {})
+                        history = item.get("move_history", [])
+                        if (
+                            not isinstance(game_id, str)
+                            or not isinstance(fen, str)
+                            or not isinstance(config, dict)
+                            or not isinstance(history, list)
+                        ):
+                            continue
+                        try:
+                            chess.Board(fen)
+                            json.dumps(history)
+                            json.dumps(config)
+                        except (ValueError, TypeError):
+                            continue
+                        connection.execute(
+                            """
+                            INSERT OR IGNORE INTO games
+                                (id, fen, config, move_history, revision)
+                            VALUES (?, ?, ?, ?, ?)
+                            """,
+                            (
+                                game_id,
+                                fen,
+                                json.dumps(config, ensure_ascii=False),
+                                json.dumps(history, ensure_ascii=False),
+                                len(history),
+                            ),
+                        )
+
+                connection.execute(
+                    """
+                    INSERT INTO metadata (key, value)
+                    VALUES ('legacy_json_migrated', '1')
+                    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                    """
+                )
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
 
     def _load_from_disk(self):
-        for path in self._get_save_paths():
-            if not os.path.exists(path):
-                continue
+        with self._connect_database() as connection:
+            rows = connection.execute(
+                """
+                SELECT id, fen, config, move_history, revision,
+                       white_token, black_token, ai_claimed_until
+                FROM games
+                """
+            ).fetchall()
+
+        stored_ids = {str(row["id"]) for row in rows}
+        ai_claim_deadlines = {
+            str(row["id"]): row["ai_claimed_until"]
+            for row in rows
+        }
+        for game_id in list(self.games):
+            if game_id not in stored_ids:
+                self._cancel_ai_task(self.games[game_id])
+                del self.games[game_id]
+
+        for row in rows:
+            game_id = str(row["id"])
             try:
-                with open(path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                if not isinstance(data, dict):
-                    continue
-                for g_id, item in data.items():
-                    disk_history = item.get("move_history", [])
-                    if g_id not in self.games:
-                        board = chess.Board(item["fen"])
-                        ai = ChessAI() if item.get("config", {}).get("type") == "computer" else None
-                        game = GameInstance(
-                            id=g_id,
-                            board=board,
-                            config=item.get("config", {}),
-                            ai=ai,
-                            move_history=disk_history,
-                        )
-                        self.games[g_id] = game
-                    else:
-                        existing = self.games[g_id]
-                        if len(disk_history) > len(existing.move_history):
-                            existing.board = chess.Board(item["fen"])
-                            existing.move_history = disk_history
-                            existing.signal_move()
-            except Exception as e:
-                import sys
-                print(f"Warning: Failed to load game state from {path}: {e}", file=sys.stderr)
+                board = chess.Board(row["fen"])
+                config = json.loads(row["config"])
+                history = json.loads(row["move_history"])
+                revision = int(row["revision"])
+                if not isinstance(config, dict) or not isinstance(history, list):
+                    raise ValueError("Stored game state is invalid")
+            except (ValueError, TypeError, json.JSONDecodeError):
+                continue
+
+            existing = self.games.get(game_id)
+            if existing is None:
+                self.games[game_id] = GameInstance(
+                    id=game_id,
+                    board=board,
+                    config=config,
+                    ai=ChessAI() if config.get("type") == "computer" else None,
+                    move_history=history,
+                    revision=revision,
+                    white_token=row["white_token"],
+                    black_token=row["black_token"],
+                )
+                continue
+
+            if existing.revision != revision:
+                existing.board = board
+                existing.config = config
+                existing.move_history = history
+                existing.revision = revision
+                existing.white_token = row["white_token"]
+                existing.black_token = row["black_token"]
+                existing.signal_move()
+
+        for game in self.games.values():
+            if (
+                game.ai is not None
+                and not game.is_game_over
+                and game.board.turn
+                == (
+                    chess.BLACK
+                    if game.config.get("color", "white") == "white"
+                    else chess.WHITE
+                )
+                and (
+                    ai_claim_deadlines.get(game.id) is None
+                    or ai_claim_deadlines[game.id] <= time.time()
+                )
+            ):
+                self.schedule_computer_turn(game)
+
+    @staticmethod
+    def _cancel_ai_task(game: GameInstance) -> None:
+        task = game.ai_task
+        if task is not None and not task.done():
+            loop = task.get_loop()
+            if loop.is_running():
+                loop.call_soon_threadsafe(task.cancel)
+            else:
+                task.cancel()
+        game.ai_task = None
+        game.ai_running = False
 
     def create_game(self, config: dict) -> GameInstance:
         with self._lock:
             self._load_from_disk()
-            game_id = str(uuid.uuid4())[:8]
             board = chess.Board()
+            ai = ChessAI() if config.get("type") == "computer" else None
+            creator_token = secrets.token_urlsafe(24)
+            creator_color = config.get("color", "white")
+            white_token = creator_token if creator_color == "white" else None
+            black_token = creator_token if creator_color == "black" else None
+            if config.get("type") == "human":
+                if white_token is None:
+                    white_token = secrets.token_urlsafe(24)
+                if black_token is None:
+                    black_token = secrets.token_urlsafe(24)
 
-            ai = None
-            if config.get("type") == "computer":
-                ai = ChessAI()
+            with self._connect_database() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                try:
+                    for _ in range(5):
+                        game_id = str(uuid.uuid4())[:8]
+                        try:
+                            connection.execute(
+                                """
+                                INSERT INTO games
+                                    (
+                                        id, fen, config, move_history, revision,
+                                        white_token, black_token
+                                    )
+                                VALUES (?, ?, ?, ?, 0, ?, ?)
+                                """,
+                                (
+                                    game_id,
+                                    board.fen(),
+                                    json.dumps(config, ensure_ascii=False),
+                                    "[]",
+                                    white_token,
+                                    black_token,
+                                ),
+                            )
+                            break
+                        except sqlite3.IntegrityError:
+                            continue
+                    else:
+                        raise RuntimeError("Could not allocate a unique game ID")
+                    connection.commit()
+                except Exception:
+                    connection.rollback()
+                    raise
 
             game = GameInstance(
                 id=game_id,
                 board=board,
-                config=config,
+                config=dict(config),
                 ai=ai,
+                revision=0,
+                player_token=creator_token,
+                white_token=white_token,
+                black_token=black_token,
             )
             self.games[game_id] = game
-            self._save_to_disk()
             self._notify_dashboard("game_created", game_id)
+            if config.get("type") == "computer" and config.get("color", "white") == "black":
+                self.schedule_computer_turn(game)
             return game
 
     def get_game(self, game_id: str) -> Optional[GameInstance]:
@@ -266,35 +451,139 @@ class GameManager:
             self._load_from_disk()
             return self.games.get(game_id)
 
+    def get_game_state(self, game_id: str) -> Optional[dict]:
+        """Return an atomic state snapshot from the shared store."""
+        with self._lock:
+            self._load_from_disk()
+            game = self.games.get(game_id)
+            return game.get_full_state() if game else None
+
+    def join_game(self, game_id: str) -> Tuple[GameInstance, str, chess.Color]:
+        """Atomically assign the remaining player slot in an agent game."""
+        with self._lock:
+            self._load_from_disk()
+            with self._connect_database() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                row = connection.execute(
+                    """
+                    SELECT id, fen, config, move_history, revision,
+                           white_token, black_token
+                    FROM games
+                    WHERE id = ?
+                    """,
+                    (game_id,),
+                ).fetchone()
+                if row is None:
+                    raise ValueError(f"Game {game_id} not found")
+
+                config = json.loads(row["config"])
+                if config.get("type") != "agent":
+                    raise ValueError("Only agent games can be joined by another agent")
+
+                white_token = row["white_token"]
+                black_token = row["black_token"]
+                if white_token is None:
+                    joined_color = chess.WHITE
+                    token_column = "white_token"
+                elif black_token is None:
+                    joined_color = chess.BLACK
+                    token_column = "black_token"
+                else:
+                    raise ValueError("Game already has two players")
+
+                player_token = secrets.token_urlsafe(24)
+                updated = connection.execute(
+                    f"""
+                    UPDATE games
+                    SET {token_column} = ?, revision = revision + 1
+                    WHERE id = ? AND revision = ?
+                    """,
+                    (player_token, game_id, row["revision"]),
+                )
+                if updated.rowcount != 1:
+                    raise RuntimeError(f"Game {game_id} changed while joining")
+                connection.commit()
+
+            game = self.games.get(game_id)
+            if game is None:
+                self._load_from_disk()
+                game = self.games.get(game_id)
+            if game is None:
+                raise RuntimeError(f"Game {game_id} disappeared while joining")
+            game.revision = int(row["revision"]) + 1
+            if joined_color == chess.WHITE:
+                game.white_token = player_token
+            else:
+                game.black_token = player_token
+            return game, player_token, joined_color
+
+    def get_player_color(
+        self,
+        game_id: str,
+        player_token: Optional[str],
+    ) -> chess.Color:
+        """Resolve a player's side from the persisted session token."""
+        with self._lock:
+            self._load_from_disk()
+            with self._connect_database() as connection:
+                row = connection.execute(
+                    """
+                    SELECT config, white_token, black_token
+                    FROM games
+                    WHERE id = ?
+                    """,
+                    (game_id,),
+                ).fetchone()
+            if row is None:
+                raise ValueError(f"Game {game_id} not found")
+
+            if player_token:
+                if row["white_token"] and hmac.compare_digest(
+                    row["white_token"], player_token
+                ):
+                    return chess.WHITE
+                if row["black_token"] and hmac.compare_digest(
+                    row["black_token"], player_token
+                ):
+                    return chess.BLACK
+
+            if row["white_token"] is not None or row["black_token"] is not None:
+                raise ValueError("Player token is not authorized for this game")
+
+            config = json.loads(row["config"])
+            return (
+                chess.WHITE
+                if config.get("color", "white") == "white"
+                else chess.BLACK
+            )
+
     def clear_games(self, clear_all=True):
         with self._lock:
+            self._load_from_disk()
             games_to_clear = (
                 list(self.games.values())
                 if clear_all
                 else [g for g in self.games.values() if g.is_game_over]
             )
             for g in games_to_clear:
-                if g.ai_task and not g.ai_task.done():
-                    g.ai_task.cancel()
+                self._cancel_ai_task(g)
 
-            if clear_all:
-                self.games.clear()
-            else:
-                self.games = {g_id: g for g_id, g in self.games.items() if not g.is_game_over}
+            game_ids = [g.id for g in games_to_clear]
+            if game_ids:
+                with self._connect_database() as connection:
+                    connection.execute("BEGIN IMMEDIATE")
+                    try:
+                        connection.executemany(
+                            "DELETE FROM games WHERE id = ?",
+                            ((game_id,) for game_id in game_ids),
+                        )
+                        connection.commit()
+                    except Exception:
+                        connection.rollback()
+                        raise
 
-            data = {}
-            for g_id, g in self.games.items():
-                data[g_id] = {
-                    "id": g.id,
-                    "fen": g.board.fen(),
-                    "config": g.config,
-                    "move_history": g.move_history,
-                }
-            for path in self._get_save_paths():
-                try:
-                    self._atomic_write_json(path, data)
-                except Exception:
-                    pass
+            for game_id in game_ids:
+                self.games.pop(game_id, None)
             self._notify_dashboard("games_cleared", "")
 
     def list_games(self):
@@ -342,14 +631,105 @@ class GameManager:
 
     def schedule_computer_turn(self, game: GameInstance):
         """Schedule AI move on the running loop, or a daemon thread if none."""
+        with self._lock:
+            if game.ai_running or (game.ai_task and not game.ai_task.done()):
+                return
+            game.ai_running = True
+
         try:
             loop = asyncio.get_running_loop()
-            game.ai_task = loop.create_task(self._computer_turn(game))
+            async def run_turn():
+                try:
+                    await self._computer_turn(game)
+                finally:
+                    with self._lock:
+                        game.ai_running = False
+                        game.ai_task = None
+
+            game.ai_task = loop.create_task(run_turn())
         except RuntimeError:
             def _run():
-                asyncio.run(self._computer_turn(game))
+                try:
+                    asyncio.run(self._computer_turn(game))
+                finally:
+                    with self._lock:
+                        game.ai_running = False
+                        game.ai_task = None
 
             threading.Thread(target=_run, daemon=True).start()
+
+    def _claim_ai_turn(self, game_id: str):
+        """Claim an AI turn atomically so only one process calculates it."""
+        with self._connect_database() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT id, fen, config, move_history, revision,
+                       ai_claim_token, ai_claimed_until
+                FROM games
+                WHERE id = ?
+                """,
+                (game_id,),
+            ).fetchone()
+            if row is None:
+                connection.commit()
+                return None
+
+            try:
+                board = chess.Board(row["fen"])
+                config = json.loads(row["config"])
+                history = json.loads(row["move_history"])
+                revision = int(row["revision"])
+                if not isinstance(config, dict) or not isinstance(history, list):
+                    raise ValueError("Stored game state is invalid")
+            except (ValueError, TypeError, json.JSONDecodeError):
+                connection.rollback()
+                return None
+
+            ai_color = (
+                chess.BLACK
+                if config.get("color", "white") == "white"
+                else chess.WHITE
+            )
+            claimed_until = row["ai_claimed_until"]
+            if (
+                config.get("type") != "computer"
+                or board.is_game_over()
+                or board.turn != ai_color
+                or (claimed_until is not None and claimed_until > time.time())
+            ):
+                connection.commit()
+                return None
+
+            claim_token = uuid.uuid4().hex
+            updated = connection.execute(
+                """
+                UPDATE games
+                SET ai_claim_token = ?, ai_claimed_until = ?
+                WHERE id = ? AND revision = ?
+                  AND (
+                      ai_claimed_until IS NULL
+                      OR ai_claimed_until <= ?
+                  )
+                """,
+                (claim_token, time.time() + 300.0, game_id, revision, time.time()),
+            )
+            if updated.rowcount != 1:
+                connection.commit()
+                return None
+            connection.commit()
+            return board, config, history, revision, claim_token
+
+    def _release_ai_claim(self, game_id: str, revision: int, claim_token: str) -> None:
+        with self._connect_database() as connection:
+            connection.execute(
+                """
+                UPDATE games
+                SET ai_claim_token = NULL, ai_claimed_until = NULL
+                WHERE id = ? AND revision = ? AND ai_claim_token = ?
+                """,
+                (game_id, revision, claim_token),
+            )
 
     async def wait_until_turn(
         self,
@@ -366,6 +746,8 @@ class GameManager:
         while True:
             with self._lock:
                 self._load_from_disk()
+                if self.games.get(game.id) is not game:
+                    return "game_not_found"
                 if game.is_game_over:
                     return "game_over"
                 if game.board.turn == my_color:
@@ -386,7 +768,13 @@ class GameManager:
 
             await asyncio.to_thread(_block_wait)
 
-    async def make_move(self, game_id: str, move_uci: str, claim_win: bool = False) -> str:
+    async def make_move(
+        self,
+        game_id: str,
+        move_uci: str,
+        claim_win: bool = False,
+        player_token: Optional[str] = None,
+    ) -> str:
         """
         Executes a move.
         Returns 'Move accepted' or raises ValueError.
@@ -395,56 +783,138 @@ class GameManager:
         schedule_ai = False
         with self._lock:
             self._load_from_disk()
-            game = self.games.get(game_id)
-            if not game:
-                raise ValueError(f"Game {game_id} not found")
+            with self._connect_database() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                row = connection.execute(
+                    """
+                    SELECT id, fen, config, move_history, revision,
+                           white_token, black_token
+                    FROM games
+                    WHERE id = ?
+                    """,
+                    (game_id,),
+                ).fetchone()
+                if row is None:
+                    raise ValueError(f"Game {game_id} not found")
 
-            try:
-                move = chess.Move.from_uci(move_uci)
-            except ValueError:
-                raise ValueError(
-                    f"Invalid UCI move format: '{move_uci}'. "
-                    "Please use standard format like 'e2e4' (start_square+end_square)."
+                try:
+                    board = chess.Board(row["fen"])
+                    config = json.loads(row["config"])
+                    history = json.loads(row["move_history"])
+                    revision = int(row["revision"])
+                    if not isinstance(config, dict) or not isinstance(history, list):
+                        raise ValueError("Stored game state is invalid")
+                except (ValueError, TypeError, json.JSONDecodeError) as error:
+                    raise RuntimeError(f"Stored game {game_id} is invalid: {error}") from error
+
+                expected_token = (
+                    row["white_token"]
+                    if board.turn == chess.WHITE
+                    else row["black_token"]
                 )
-
-            if move not in game.board.legal_moves:
-                sample_moves = ", ".join([str(m) for m in list(game.board.legal_moves)[:3]])
-                raise ValueError(
-                    f"Illegal move: '{move_uci}'. Review the board state. "
-                    f"Sample legal moves: {sample_moves}..."
+                has_player_tokens = (
+                    row["white_token"] is not None
+                    or row["black_token"] is not None
                 )
+                if has_player_tokens and expected_token is None:
+                    raise ValueError("No player is assigned to the current turn")
+                if expected_token is not None:
+                    if player_token is None:
+                        raise ValueError("A player token is required to move this game")
+                    if not hmac.compare_digest(expected_token, player_token):
+                        raise ValueError("Player token is not authorized for the current turn")
 
-            san = game.board.san(move)
-            turn_str = "White" if game.board.turn == chess.WHITE else "Black"
-            captured_str = _captured_symbol(game.board, move)
+                try:
+                    move = chess.Move.from_uci(move_uci)
+                except ValueError:
+                    raise ValueError(
+                        f"Invalid UCI move format: '{move_uci}'. "
+                        "Please use standard format like 'e2e4' (start_square+end_square)."
+                    )
 
-            game.board.push(move)
+                if move not in board.legal_moves:
+                    sample_moves = ", ".join([str(m) for m in list(board.legal_moves)[:3]])
+                    raise ValueError(
+                        f"Illegal move: '{move_uci}'. Review the board state. "
+                        f"Sample legal moves: {sample_moves}..."
+                    )
 
-            move_entry = {
-                "move_number": (len(game.move_history) // 2) + 1,
-                "turn": turn_str,
-                "uci": move.uci(),
-                "san": san,
-                "fen": game.board.fen(),
-                "captured": captured_str,
-            }
-            game.move_history.append(move_entry)
+                san = board.san(move)
+                turn_str = "White" if board.turn == chess.WHITE else "Black"
+                captured_str = _captured_symbol(board, move)
+                board.push(move)
 
-            if claim_win:
-                if not game.board.is_checkmate():
-                    game.board.pop()
-                    game.move_history.pop()
+                move_entry = {
+                    "move_number": (len(history) // 2) + 1,
+                    "turn": turn_str,
+                    "uci": move.uci(),
+                    "san": san,
+                    "fen": board.fen(),
+                    "captured": captured_str,
+                }
+                history.append(move_entry)
+
+                if claim_win and not board.is_checkmate():
                     raise ValueError(
                         "Move rejected: You claimed Checkmate, but this move does not result in Checkmate."
                     )
 
+                new_revision = revision + 1
+                updated = connection.execute(
+                    """
+                    UPDATE games
+                    SET fen = ?, config = ?, move_history = ?, revision = ?,
+                        ai_claim_token = NULL, ai_claimed_until = NULL
+                    WHERE id = ? AND revision = ?
+                    """,
+                    (
+                        board.fen(),
+                        json.dumps(config, ensure_ascii=False),
+                        json.dumps(history, ensure_ascii=False),
+                        new_revision,
+                        game_id,
+                        revision,
+                    ),
+                )
+                if updated.rowcount != 1:
+                    raise RuntimeError(f"Game {game_id} changed while the move was being submitted")
+                connection.commit()
+
+            game = self.games.get(game_id)
+            if game is None:
+                game = GameInstance(
+                    id=game_id,
+                    board=board,
+                    config=config,
+                    ai=ChessAI() if config.get("type") == "computer" else None,
+                    move_history=history,
+                    revision=new_revision,
+                    white_token=row["white_token"],
+                    black_token=row["black_token"],
+                )
+                self.games[game_id] = game
+            else:
+                game.board = board
+                game.config = config
+                game.move_history = history
+                game.revision = new_revision
+                game.white_token = row["white_token"]
+                game.black_token = row["black_token"]
+
             game.signal_move()
             game.notify_listeners(event_type="move")
-            self._save_to_disk()
             self._notify_dashboard("game_updated", game_id)
 
-            if game.config.get("type") == "computer" and not game.board.is_game_over():
-                schedule_ai = True
+            if (
+                game.config.get("type") == "computer"
+                and not game.board.is_game_over()
+            ):
+                user_color = (
+                    chess.WHITE
+                    if game.config.get("color", "white") == "white"
+                    else chess.BLACK
+                )
+                schedule_ai = game.board.turn != user_color
 
         if schedule_ai:
             self.schedule_computer_turn(game)
@@ -455,41 +925,91 @@ class GameManager:
         """Calculates and executes computer move without blocking the event loop."""
         await asyncio.sleep(0.5)
 
-        with self._lock:
-            if game.is_game_over or game.ai is None:
-                return
-            if game.id not in self.games:
-                return
-            difficulty = game.config.get("difficulty", 5)
-            board_copy = game.board.copy()
-
-        ai_move = await asyncio.to_thread(game.ai.get_move, board_copy, difficulty)
+        claimed = self._claim_ai_turn(game.id)
+        if claimed is None:
+            return
+        board_copy, config, history, revision, claim_token = claimed
+        ai = game.ai or ChessAI()
+        difficulty = config.get("difficulty", 5)
+        try:
+            ai_move = await asyncio.to_thread(ai.get_move, board_copy, difficulty)
+        except (Exception, asyncio.CancelledError):
+            self._release_ai_claim(game.id, revision, claim_token)
+            raise
         if not ai_move:
+            self._release_ai_claim(game.id, revision, claim_token)
             return
 
         with self._lock:
-            if game.is_game_over or game.id not in self.games:
-                return
-            if ai_move not in game.board.legal_moves:
-                return
+            with self._connect_database() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                row = connection.execute(
+                    """
+                    SELECT fen, config, move_history, revision
+                    FROM games
+                    WHERE id = ? AND revision = ? AND ai_claim_token = ?
+                    """,
+                    (game.id, revision, claim_token),
+                ).fetchone()
+                if row is None:
+                    connection.commit()
+                    return
 
-            san = game.board.san(ai_move)
-            turn_str = "White" if game.board.turn == chess.WHITE else "Black"
-            captured_str = _captured_symbol(game.board, ai_move)
+                board = chess.Board(row["fen"])
+                current_config = json.loads(row["config"])
+                current_history = json.loads(row["move_history"])
+                if ai_move not in board.legal_moves:
+                    connection.execute(
+                        """
+                        UPDATE games
+                        SET ai_claim_token = NULL, ai_claimed_until = NULL
+                        WHERE id = ? AND revision = ? AND ai_claim_token = ?
+                        """,
+                        (game.id, revision, claim_token),
+                    )
+                    connection.commit()
+                    return
 
-            game.board.push(ai_move)
+                san = board.san(ai_move)
+                turn_str = "White" if board.turn == chess.WHITE else "Black"
+                captured_str = _captured_symbol(board, ai_move)
+                board.push(ai_move)
+                current_history.append(
+                    {
+                        "move_number": (len(current_history) // 2) + 1,
+                        "turn": turn_str,
+                        "uci": ai_move.uci(),
+                        "san": san,
+                        "fen": board.fen(),
+                        "captured": captured_str,
+                    }
+                )
+                updated = connection.execute(
+                    """
+                    UPDATE games
+                    SET fen = ?, config = ?, move_history = ?, revision = ?,
+                        ai_claim_token = NULL, ai_claimed_until = NULL
+                    WHERE id = ? AND revision = ? AND ai_claim_token = ?
+                    """,
+                    (
+                        board.fen(),
+                        json.dumps(current_config, ensure_ascii=False),
+                        json.dumps(current_history, ensure_ascii=False),
+                        revision + 1,
+                        game.id,
+                        revision,
+                        claim_token,
+                    ),
+                )
+                if updated.rowcount != 1:
+                    connection.commit()
+                    return
+                connection.commit()
 
-            move_entry = {
-                "move_number": (len(game.move_history) // 2) + 1,
-                "turn": turn_str,
-                "uci": ai_move.uci(),
-                "san": san,
-                "fen": game.board.fen(),
-                "captured": captured_str,
-            }
-            game.move_history.append(move_entry)
-
+            game.board = board
+            game.config = current_config
+            game.move_history = current_history
+            game.revision = revision + 1
             game.signal_move()
             game.notify_listeners(event_type="move")
-            self._save_to_disk()
             self._notify_dashboard("game_updated", game.id)
